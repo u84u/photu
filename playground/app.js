@@ -48,9 +48,17 @@ function tokenize(text) {
 
 function parsePipeline(text) {
   const ops = [];
-  for (const segment of text.split("|")) {
-    const tokens = tokenize(segment);
-    if (tokens.length === 0) continue;
+  const segments = text.split("|");
+  for (let i = 0; i < segments.length; i++) {
+    const tokens = tokenize(segments[i]);
+    if (tokens.length === 0) {
+      // A trailing "|" is someone mid-typing; an empty stage anywhere
+      // else is a leftover the shell would reject too.
+      if (i === segments.length - 1) continue;
+      const err = new Panic("EBADARG", "empty stage between pipes - remove the extra '|'");
+      err.stage = "photu";
+      throw err;
+    }
     const [command, ...rest] = tokens;
     try {
       if (command in NOT_HERE) {
