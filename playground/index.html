@@ -73,12 +73,12 @@
 <main>
   <header>
     <h1>photu <span class="guj">ફોટુ</span></h1>
-    <span class="sub">playground &mdash; every pipeline below also runs verbatim in your terminal</span>
+    <span class="sub">browser playground</span>
   </header>
   <p id="status">loading libvips (WebAssembly)&hellip;</p>
 
   <div id="drop">
-    drop an image here, click to pick one, or <button id="sample" type="button">use a sample image</button>
+    drop an image here, click to choose one, or <button id="sample" type="button">use a sample image</button>
     <input id="file" type="file" accept="image/*">
   </div>
 
@@ -104,12 +104,14 @@
     </section>
   </div>
 
-  <div id="plan">the plan JSON travelling down the pipe appears here</div>
+  <div id="plan">the plan for the current pipeline shows up here</div>
 
   <footer>
-    The pipe carries a <b>plan, not pixels</b> &mdash; pixels are decoded once, at
-    <code>write</code>. Install the real thing: <code>npm i -g photu</code> &middot;
-    <a href="https://www.npmjs.com/package/photu">npm</a>
+    This is the same pipeline language as the CLI, running on the same libvips,
+    compiled to WebAssembly. Your image never leaves the browser.
+    Install the CLI with <code>npm i -g photu</code> &middot;
+    <a href="https://www.npmjs.com/package/photu">npm</a> &middot;
+    <a href="https://github.com/u84u/photu">github</a>
   </footer>
 </main>
 <script type="module" src="/app.js"></script>

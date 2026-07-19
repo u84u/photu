@@ -20,10 +20,10 @@ let beforeURL = null;
 let afterURL = null;
 
 const NOT_HERE = {
-  read: "the dropped image is your `read` - just type the transforms",
-  info: "info is a CLI utility - the before/after panes show it here",
-  explain: "the plan box below is a permanent `explain`",
-  formats: "this playground writes jpeg, png, webp, gif, tiff, avif",
+  read: "there is no read here; the image you dropped is the input",
+  info: "info is not available in the playground",
+  explain: "the plan is already shown below the images",
+  formats: "the playground writes jpeg, png, webp, gif, tiff and avif",
 };
 
 function tokenize(text) {
@@ -204,7 +204,7 @@ $("pipeline").addEventListener("input", () => {
 
 try {
   vips = await Vips();
-  status.textContent = `libvips ${vips.version(0)}.${vips.version(1)}.${vips.version(2)} ready - drop an image to start`;
+  status.textContent = `libvips ${vips.version(0)}.${vips.version(1)}.${vips.version(2)} loaded`;
   status.classList.add("ready");
   run();
 } catch (err) {
