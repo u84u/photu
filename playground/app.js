@@ -5,7 +5,7 @@
 
 import Vips from "/vips/vips-es6.js";
 import { normalizeOp } from "/core/ops.js";
-import { newPlan, serializePlan, Panic } from "/core/plan.js";
+import { newPlan, errorPlan, isErrorPlan, serializePlan, Panic } from "/core/plan.js";
 import { renderPipeline, ExecError } from "/exec-wasm.js";
 
 const $ = (id) => document.getElementById(id);
@@ -52,10 +52,15 @@ function parsePipeline(text) {
     const tokens = tokenize(segment);
     if (tokens.length === 0) continue;
     const [command, ...rest] = tokens;
-    if (command in NOT_HERE) {
-      throw new Panic("EBADARG", `${command}: ${NOT_HERE[command]}`);
+    try {
+      if (command in NOT_HERE) {
+        throw new Panic("EBADARG", `${command}: ${NOT_HERE[command]}`);
+      }
+      ops.push(normalizeOp(command, rest));
+    } catch (err) {
+      if (err instanceof Panic) err.stage = command;
+      throw err;
     }
-    ops.push(normalizeOp(command, rest));
   }
   return ops;
 }
@@ -78,13 +83,39 @@ function human(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+let planMode = "wire";
+let lastPlan = null;
+
+function explainText(plan) {
+  const lines = [`photu plan (protocol ${plan.photu})`];
+  if (isErrorPlan(plan)) {
+    lines.push(`ERROR in stage '${plan.error.stage}' [${plan.error.code}]: ${plan.error.message}`);
+  } else {
+    lines.push(`files (${plan.files.length}):`);
+    for (const f of plan.files) lines.push(`  ${f}`);
+    lines.push(`ops (${plan.ops.length}):`);
+    plan.ops.forEach((op, i) => {
+      const args = Object.entries(op)
+        .filter(([k]) => k !== "op")
+        .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+        .join(" ");
+      lines.push(`  ${i + 1}. ${op.op}${args ? "  " + args : ""}`);
+    });
+  }
+  return lines.join("\n");
+}
+
+function drawPlan() {
+  if (lastPlan === null) return;
+  planBox.textContent =
+    planMode === "wire" ? serializePlan(lastPlan).trimEnd() : explainText(lastPlan);
+}
+
 function renderPlanBox(ops) {
   const plan = newPlan([inputName]);
   plan.ops = ops;
-  planBox.innerHTML = "";
-  const b = document.createElement("b");
-  b.textContent = "on the pipe: ";
-  planBox.append(b, serializePlan(plan).trimEnd());
+  lastPlan = plan;
+  drawPlan();
 }
 
 function outputName(ops) {
@@ -106,7 +137,11 @@ function run() {
   try {
     ops = parsePipeline($("pipeline").value);
   } catch (err) {
-    if (err instanceof Panic) return showError(err.message);
+    if (err instanceof Panic) {
+      lastPlan = errorPlan(err.stage ?? "photu", err.code, err.message);
+      drawPlan();
+      return showError(err.message);
+    }
     throw err;
   }
   clearError();
@@ -201,6 +236,15 @@ $("pipeline").addEventListener("input", () => {
   clearTimeout(timer);
   timer = setTimeout(run, 300);
 });
+
+for (const mode of ["wire", "explain"]) {
+  $(`mode-${mode}`).addEventListener("click", () => {
+    planMode = mode;
+    $("mode-wire").classList.toggle("on", mode === "wire");
+    $("mode-explain").classList.toggle("on", mode === "explain");
+    drawPlan();
+  });
+}
 
 try {
   vips = await Vips();

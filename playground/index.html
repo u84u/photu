@@ -58,12 +58,25 @@
     border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
     font: 13px ui-monospace, Consolas, monospace; white-space: pre-wrap;
   }
-  #plan {
+  #plan-wrap {
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    padding: 12px 14px; font: 12px/1.6 ui-monospace, Consolas, monospace;
-    color: var(--dim); word-break: break-all; margin-top: 16px;
+    margin-top: 16px;
   }
-  #plan b { color: var(--text); font-weight: 600; }
+  #plan-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 14px; border-bottom: 1px solid var(--line);
+  }
+  #plan-head span { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  .seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button {
+    border: none; border-radius: 0; padding: 4px 12px; font-size: 12px;
+    background: transparent; color: var(--dim);
+  }
+  .seg button.on { background: var(--line); color: var(--text); }
+  #plan {
+    padding: 12px 14px; font: 12px/1.6 ui-monospace, Consolas, monospace;
+    color: var(--dim); white-space: pre-wrap; word-break: break-all;
+  }
   footer { margin-top: 28px; font-size: 13px; color: var(--dim); }
   footer a { color: var(--accent); }
   code { color: var(--accent); }
@@ -104,7 +117,16 @@
     </section>
   </div>
 
-  <div id="plan">the plan for the current pipeline shows up here</div>
+  <div id="plan-wrap">
+    <div id="plan-head">
+      <span>on the pipe</span>
+      <div class="seg">
+        <button id="mode-wire" class="on" type="button">wire</button>
+        <button id="mode-explain" type="button">explain</button>
+      </div>
+    </div>
+    <div id="plan">the plan for the current pipeline shows up here</div>
+  </div>
 
   <footer>
     This is the same pipeline language as the CLI, running on the same libvips,
