@@ -50,6 +50,37 @@ ops (1):
 A side effect of the plan being plain text is that pipelines work the same in
 bash, zsh, PowerShell and cmd.
 
+## Speed
+
+50 public-domain images from the Met Museum's Open Access collection (1,130px
+to 4,000px on the long edge, 116 MB of JPEGs), resized to 800px wide and
+written as WebP at quality 80. Measured with hyperfine on Windows 10, against
+ImageMagick 7.1.2-27:
+
+| | time |
+|---|---|
+| photu | 2.0 s |
+| ImageMagick Q8 with `-define jpeg:size=1600x1200` | 12.6 s |
+| ImageMagick Q8 | 22.2 s |
+| ImageMagick Q16-HDRI (the default download) | 23.0 s |
+
+The commands were `photu read "src/*.jpg" | photu resize 800 | photu write
+"out/{name}.webp" quality=80` and `magick mogrify -path out -format webp
+-quality 80 -resize 800 src/*.jpg`. The `jpeg:size` row is the fastest
+ImageMagick configuration I could find. Most of the difference is libvips: it
+decodes JPEGs at reduced scale where the pipeline allows it, and it threads
+well. photu's time includes launching four Node processes.
+
+## Isn't this just a libvips wrapper?
+
+Yes. libvips does all the pixel work, and the speed above is libvips' speed.
+What photu adds is the interface. The vips CLI runs one operation per
+process, so chaining operations means writing intermediate files or pushing
+raw pixels through the pipe; photu passes a plan instead and runs the whole
+chain fused. It also adds globs, output templates, overwrite and collision
+guards, and an install that is one npm command on any OS. If `vipsthumbnail`
+already covers your workflow, use it - it's excellent.
+
 ## Commands
 
 | command | example | notes |
