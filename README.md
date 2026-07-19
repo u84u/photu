@@ -16,7 +16,7 @@ this exists.
 
 photu (ફોટુ) is Gujarati slang for a photo.
 
-You can try it in the browser at [tryphotu.netlify.app](https://tryphotu.netlify.app) —
+You can try it in the browser at [tryphotu.vercel.app](https://tryphotu.vercel.app) —
 the playground runs the same parser and the same libvips, compiled to
 WebAssembly, and images stay on your machine.
 
