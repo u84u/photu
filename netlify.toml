@@ -1,0 +1,6 @@
+[build]
+  command = "npm run build && node scripts/build-site.mjs"
+  publish = "site"
+
+[build.environment]
+  NODE_VERSION = "24"
