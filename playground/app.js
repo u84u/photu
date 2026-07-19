@@ -247,7 +247,9 @@ for (const mode of ["wire", "explain"]) {
 }
 
 try {
-  vips = await Vips();
+  // heif = avif support, resvg = svg input. Skipping the jxl module
+  // saves ~2 MB of transfer; the playground never advertised jxl.
+  vips = await Vips({ dynamicLibraries: ["vips-heif.wasm", "vips-resvg.wasm"] });
   status.textContent = `libvips ${vips.version(0)}.${vips.version(1)}.${vips.version(2)} loaded`;
   status.classList.add("ready");
   run();

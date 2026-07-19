@@ -24,7 +24,7 @@ for (const f of ["index.html", "app.js", "exec-wasm.js"]) {
 cpSync(join(root, "dist", "core"), join(site, "core"), { recursive: true });
 
 const vipsLib = join(root, "node_modules", "wasm-vips", "lib");
-for (const f of ["vips-es6.js", "vips.wasm", "vips-heif.wasm", "vips-jxl.wasm", "vips-resvg.wasm"]) {
+for (const f of ["vips-es6.js", "vips.wasm", "vips-heif.wasm", "vips-resvg.wasm"]) {
   cpSync(join(vipsLib, f), join(site, "vips", f));
 }
 
@@ -33,6 +33,12 @@ writeFileSync(
   `/*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
+
+/vips/*
+  Cache-Control: public, max-age=86400
+
+/core/*
+  Cache-Control: public, max-age=3600
 `,
 );
 
