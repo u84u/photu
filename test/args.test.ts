@@ -31,6 +31,12 @@ test("option values may contain '='", () => {
   assert.equal(args.options.get("name"), "a=b");
 });
 
+test("a URL token is always one positional, even with '=' in the query string", () => {
+  const args = parseArgs(["https://cdn.example.com/a.jpg?w=800&sig=abc", "gravity=center"]);
+  assert.deepEqual(args.positionals, ["https://cdn.example.com/a.jpg?w=800&sig=abc"]);
+  assert.equal(args.options.get("gravity"), "center");
+});
+
 test("parseArgs rejects bad options", () => {
   assert.throws(() => parseArgs(["fit=cover", "fit=fill"]), panicWith("EBADARG"));
   assert.throws(() => parseArgs(["quality="]), panicWith("EBADARG"));

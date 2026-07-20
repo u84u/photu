@@ -17,6 +17,7 @@ import {
   type Plan,
   errorPlan,
   isErrorPlan,
+  isUrl,
   newPlan,
   parsePlan,
   serializePlan,
@@ -80,19 +81,52 @@ async function expandGlob(pattern: string): Promise<string[]> {
   return files;
 }
 
-async function doRead(tokens: string[]): Promise<void> {
-  let pattern: string;
+/** URLs are passed through as-is; the actual fetch happens per-file inside
+ * `write`, in the same process (and worker pool) that runs sharp - so
+ * nothing here ever touches the network. Only syntax gets checked. */
+function checkUrl(spec: string): void {
   try {
-    pattern = globPattern("read", tokens);
+    new URL(spec);
+  } catch {
+    throw new Panic("EBADARG", `read: '${spec}' is not a valid URL`);
+  }
+}
+
+async function doRead(tokens: string[]): Promise<void> {
+  let specs: string[];
+  try {
+    const args = parseArgs(tokens);
+    if (args.positionals.length === 0 || args.options.size > 0) {
+      throw new Panic(
+        "EBADARG",
+        `read: usage: photu read "<glob-or-url>" ["<glob-or-url>" ...]`,
+      );
+    }
+    specs = args.positionals;
+    for (const spec of specs) if (isUrl(spec)) checkUrl(spec);
   } catch (err) {
     if (err instanceof Panic) return creatorFail("read", err.code, err.message);
     throw err;
   }
-  const files = await expandGlob(pattern);
-  if (files.length === 0) {
-    return creatorFail("read", "EEMPTY", `read: '${pattern}' matched no files`);
+
+  const perSpec: string[][] = new Array(specs.length);
+  try {
+    for (let i = 0; i < specs.length; i++) {
+      if (isUrl(specs[i])) {
+        perSpec[i] = [specs[i]];
+        continue;
+      }
+      const matches = await expandGlob(specs[i].replaceAll("\\", "/"));
+      if (matches.length === 0) {
+        throw new Panic("EEMPTY", `read: '${specs[i]}' matched no files`);
+      }
+      perSpec[i] = matches;
+    }
+  } catch (err) {
+    if (err instanceof Panic) return creatorFail("read", err.code, err.message);
+    throw err;
   }
-  emit(newPlan(files));
+  emit(newPlan(perSpec.flat()));
 }
 
 async function doInfo(tokens: string[]): Promise<void> {
@@ -181,7 +215,7 @@ function doExplain(tokens: string[]): void {
 
 const USAGE = `usage: photu <command> [args]
 
-  photu read "<glob>"        start a pipeline from matching files
+  photu read "<glob-or-url>" [...]  start a pipeline from matching files and/or URLs
   ${COMMANDS.filter((c) => c !== "write").join(", ")}
                              transform stages (photu <command> to see usage)
   photu write <template>     execute the pipeline and write output files

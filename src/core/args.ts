@@ -1,7 +1,7 @@
 // Command-line token parsing for photu stages: positionals + key=value
 // options + bare boolean flags. No --dashes. Pure module, no Node APIs.
 
-import { Panic } from "./plan.ts";
+import { Panic, isUrl } from "./plan.ts";
 
 export type ArgValue = string | number | boolean;
 
@@ -30,6 +30,12 @@ export function parseArgs(tokens: string[]): ParsedArgs {
   const options = new Map<string, ArgValue>();
 
   for (const token of tokens) {
+    // A URL's query string is full of '='; no real option key contains
+    // '://', so route it straight to positionals instead of splitting.
+    if (isUrl(token)) {
+      positionals.push(token);
+      continue;
+    }
     const eq = token.indexOf("=");
     if (eq === -1) {
       positionals.push(token);

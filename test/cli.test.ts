@@ -42,6 +42,27 @@ test("read panics on a glob that matches nothing", () => {
   assert.equal(plan.error.code, "EEMPTY");
 });
 
+test("read takes multiple sources and mixes globs with URLs", () => {
+  const { status, stdout } = run([
+    "read",
+    join(dir, "*.jpg"),
+    "https://cdn.example.com/logo.png?w=800&sig=abc",
+  ]);
+  assert.equal(status, 0);
+  const plan = parsePlan(stdout) as OkPlan;
+  assert.ok(!isErrorPlan(plan));
+  assert.deepEqual(plan.files.slice(-1), ["https://cdn.example.com/logo.png?w=800&sig=abc"]);
+  assert.equal(plan.files.length, 3, "two local matches plus the URL, order preserved");
+});
+
+test("read never touches the network for a syntactically bad URL", () => {
+  const { status, stdout, stderr } = run(["read", "http://"]);
+  assert.equal(status, 1);
+  assert.match(stderr, /not a valid URL/);
+  const plan = parsePlan(stdout) as ErrPlan;
+  assert.equal(plan.error.code, "EBADARG");
+});
+
 test("a full pipeline accumulates normalized ops", () => {
   const read = run(["read", join(dir, "*.jpg")]);
   const resize = run(["resize", "1600"], read.stdout);

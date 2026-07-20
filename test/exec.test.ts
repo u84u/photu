@@ -1,10 +1,11 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
 import sharp from "sharp";
 
 // libvips keeps recently-read files open; that blocks temp-dir cleanup on Windows.
@@ -26,6 +27,31 @@ function pipeline(globPattern: string, ...stages: string[][]) {
   return res;
 }
 
+/** Async counterpart of run(): spawnSync blocks this process's event loop
+ * for the child's whole lifetime, which would starve the in-process test
+ * HTTP server below of the chance to answer the child's fetch. Only the
+ * URL-source tests need this. */
+function runAsync(args: string[], input = ""): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [MAIN, ...args]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", reject);
+    child.on("close", (status) => resolvePromise({ status, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+async function pipelineAsync(globPattern: string, ...stages: string[][]) {
+  let res = await runAsync(["read", globPattern]);
+  for (const stage of stages) {
+    res = await runAsync(stage, res.stdout);
+  }
+  return res;
+}
+
 const dir = mkdtempSync(join(tmpdir(), "photu-exec-")).replaceAll("\\", "/");
 const out = join(dir, "out").replaceAll("\\", "/");
 
@@ -43,6 +69,34 @@ before(async () => {
   await sharp({ create: red }).jpeg().toFile(join(dir, "nested", "red.jpg"));
 });
 after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+
+// A local HTTP server stands in for a remote host, so URL-source tests
+// don't depend on outbound internet access.
+let server: ReturnType<typeof createServer>;
+let base: string;
+
+before(async () => {
+  const photo = await sharp({ create: { width: 64, height: 40, channels: 3 as const, background: "blue" } })
+    .jpeg()
+    .toBuffer();
+  const huge = Buffer.alloc(51 * 1024 * 1024);
+
+  server = createServer((req, res) => {
+    if (req.url === "/photo.jpg?w=800&sig=abc") {
+      res.writeHead(200, { "content-type": "image/jpeg" });
+      res.end(photo);
+    } else if (req.url === "/huge") {
+      res.writeHead(200, { "content-type": "image/jpeg", "content-length": String(huge.length) });
+      res.end(huge);
+    } else {
+      res.writeHead(404);
+      res.end("not found");
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+});
+after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
 test("end-to-end: resize + grayscale to webp", async () => {
   const res = pipeline(
@@ -154,6 +208,38 @@ test("a corrupt input fails the batch with the file named", async () => {
   const res = pipeline(`${dir}/corrupt/*.jpg`, ["write", `${out}/k/{name}.png`]);
   assert.equal(res.status, 1);
   assert.match(res.stderr, /bad\.jpg/);
+});
+
+test("a URL source is fetched straight into the pipeline, no disk round trip", async () => {
+  const res = await pipelineAsync(
+    `${base}/photo.jpg?w=800&sig=abc`,
+    ["resize", "32"],
+    ["write", `${out}/url/{name}.webp`],
+  );
+  assert.equal(res.status, 0, res.stderr);
+  const m = await sharp(`${out}/url/photo.webp`).metadata();
+  assert.equal(m.format, "webp");
+  assert.equal(m.width, 32, "the query string didn't leak into {name}");
+});
+
+test("a batch can mix local files and URLs", async () => {
+  const read = await runAsync(["read", `${dir}/red.jpg`, `${base}/photo.jpg?w=800&sig=abc`]);
+  const write = await runAsync(["write", `${out}/mix/{name}.png`], read.stdout);
+  assert.equal(write.status, 0, write.stderr);
+  assert.ok(existsSync(`${out}/mix/red.png`));
+  assert.ok(existsSync(`${out}/mix/photo.png`));
+});
+
+test("a 404 URL source fails the batch with the URL named", async () => {
+  const res = await pipelineAsync(`${base}/missing`, ["write", `${out}/url/{name}.png`]);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /missing.*HTTP 404/);
+});
+
+test("a URL source over the fetch size cap is rejected without downloading it", async () => {
+  const res = await pipelineAsync(`${base}/huge`, ["write", `${out}/url/{name}.png`]);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /fetch limit/);
 });
 
 test("info prints a row per file", () => {

@@ -5,7 +5,7 @@
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import sharp from "sharp";
-import { Panic, type Op, type OkPlan } from "../core/plan.ts";
+import { Panic, isUrl, type Op, type OkPlan } from "../core/plan.ts";
 
 // Each input is read exactly once per run, so libvips' file cache buys
 // nothing here - it only holds memory and keeps files locked on Windows.
@@ -19,10 +19,63 @@ function runtimeFail(file: string, message: string): never {
 }
 
 // --------------------------------------------------------------------------
+// URL sources: fetched straight into memory and handed to sharp as a
+// buffer, so a remote image gets exactly one network round trip and never
+// touches disk - the fetch just replaces the initial decode step that
+// `sharp(path)` would otherwise do from a local file.
+
+const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_MAX_BYTES = 50 * 1024 * 1024;
+
+async function fetchBuffer(url: string): Promise<Buffer> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    const reason =
+      (err as Error).name === "AbortError"
+        ? `timed out after ${FETCH_TIMEOUT_MS / 1000}s`
+        : (err as Error).message;
+    throw new Panic("EFETCH", `${url}: could not fetch - ${reason}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    throw new Panic("EFETCH", `${url}: HTTP ${res.status} ${res.statusText}`);
+  }
+  const declared = Number(res.headers.get("content-length") ?? "0");
+  if (declared > FETCH_MAX_BYTES) {
+    throw new Panic(
+      "EFETCH",
+      `${url}: ${declared} bytes exceeds the ${FETCH_MAX_BYTES / (1024 * 1024)} MB fetch limit`,
+    );
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > FETCH_MAX_BYTES) {
+    throw new Panic(
+      "EFETCH",
+      `${url}: ${buf.length} bytes exceeds the ${FETCH_MAX_BYTES / (1024 * 1024)} MB fetch limit`,
+    );
+  }
+  if (buf.length === 0) {
+    throw new Panic("EFETCH", `${url}: empty response`);
+  }
+  return buf;
+}
+
+// --------------------------------------------------------------------------
 // Output path templating: {name}, {ext}, {i}
 
 function splitName(file: string): { name: string; ext: string } {
-  const base = file.slice(file.lastIndexOf("/") + 1);
+  let base: string;
+  if (isUrl(file)) {
+    const path = new URL(file).pathname;
+    base = decodeURIComponent(path.slice(path.lastIndexOf("/") + 1)) || "image";
+  } else {
+    base = file.slice(file.lastIndexOf("/") + 1);
+  }
   const dot = base.lastIndexOf(".");
   if (dot <= 0) return { name: base, ext: "" };
   return { name: base.slice(0, dot), ext: base.slice(dot + 1) };
@@ -106,7 +159,8 @@ function outputFormat(op: Op, file: string): string {
 }
 
 async function processFile(file: string, ops: Op[], outPath: string): Promise<void> {
-  let img = sharp(file).rotate(); // EXIF auto-orient, always
+  const input = isUrl(file) ? await fetchBuffer(file) : file;
+  let img = sharp(input).rotate(); // EXIF auto-orient, always
 
   for (const op of ops) {
     switch (op.op) {

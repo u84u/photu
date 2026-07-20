@@ -12,6 +12,13 @@ export type OkPlan = { photu: number; files: string[]; ops: Op[] };
 export type ErrPlan = { photu: number; error: PlanError };
 export type Plan = OkPlan | ErrPlan;
 
+/** A plan's `files` entries are either local paths or, since photu also
+ * reads over the network, http(s) URLs. This is the one place that says
+ * which. */
+export function isUrl(file: string): boolean {
+  return /^https?:\/\//i.test(file);
+}
+
 /** A fatal photu error. `code` is stable and machine-readable. */
 export class Panic extends Error {
   code: string;
