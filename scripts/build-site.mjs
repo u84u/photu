@@ -18,7 +18,7 @@ rmSync(site, { recursive: true, force: true });
 mkdirSync(join(site, "core"), { recursive: true });
 mkdirSync(join(site, "vips"), { recursive: true });
 
-for (const f of ["index.html", "app.js", "exec-wasm.js"]) {
+for (const f of ["index.html", "app.js", "exec-wasm.js", "completions.js"]) {
   cpSync(join(root, "playground", f), join(site, f));
 }
 cpSync(join(root, "dist", "core"), join(site, "core"), { recursive: true });

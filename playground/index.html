@@ -23,13 +23,27 @@
   #status { font-size: 13px; color: var(--dim); margin: 6px 0 18px; }
   #status.ready { color: var(--ok); }
   .pipe-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .pipe-input-wrap { position: relative; flex: 1; }
   #pipeline {
-    flex: 1; background: var(--panel); color: var(--text);
+    width: 100%; background: var(--panel); color: var(--text);
     border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
     font: 14px/1.4 ui-monospace, Consolas, monospace;
   }
   #pipeline:focus { outline: 1px solid var(--accent); }
   .prefix { align-self: center; color: var(--dim); font: 14px ui-monospace, Consolas, monospace; }
+  #suggest {
+    display: none; position: absolute; left: 0; right: 0; top: 100%; z-index: 20;
+    margin: 4px 0 0; padding: 4px; list-style: none;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    max-height: 220px; overflow-y: auto;
+  }
+  #suggest.open { display: block; }
+  #suggest li {
+    padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    font: 13px ui-monospace, Consolas, monospace; color: var(--text);
+  }
+  #suggest li.active, #suggest li:hover { background: var(--line); }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
   .panel {
@@ -98,8 +112,11 @@
 
   <div class="pipe-row">
     <span class="prefix">photu read your-image |</span>
-    <input id="pipeline" spellcheck="false"
-      value='resize 800 | grayscale | write out.webp quality=80'>
+    <div class="pipe-input-wrap">
+      <input id="pipeline" spellcheck="false" autocomplete="off"
+        value='resize 800 | grayscale | write out.webp quality=80'>
+      <ul id="suggest"></ul>
+    </div>
   </div>
 
   <div id="error"></div>

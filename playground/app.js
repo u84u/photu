@@ -4,14 +4,19 @@
 // the terminal experience by construction.
 
 import Vips from "/vips/vips-es6.js";
-import { normalizeOp } from "/core/ops.js";
+import { normalizeOp, COMMANDS, FITS, GRAVITIES } from "/core/ops.js";
 import { newPlan, errorPlan, isErrorPlan, serializePlan, Panic } from "/core/plan.js";
 import { renderPipeline, ExecError } from "/exec-wasm.js";
+import { configure as configureCompletions, getSuggestions } from "/completions.js";
+
+configureCompletions(COMMANDS, FITS, GRAVITIES);
 
 const $ = (id) => document.getElementById(id);
 const status = $("status");
 const errorBox = $("error");
 const planBox = $("plan");
+const pipelineInput = $("pipeline");
+const suggestBox = $("suggest");
 
 let vips = null;
 let inputBytes = null;
@@ -240,10 +245,88 @@ drop.addEventListener("drop", async (e) => {
 });
 
 let timer = null;
-$("pipeline").addEventListener("input", () => {
+pipelineInput.addEventListener("input", () => {
   clearTimeout(timer);
   timer = setTimeout(run, 300);
 });
+
+// --- autocomplete -------------------------------------------------------
+
+let suggestItems = [];
+let suggestRange = null;
+let suggestIndex = -1;
+
+function renderSuggest() {
+  suggestBox.innerHTML = "";
+  suggestBox.classList.toggle("open", suggestItems.length > 0);
+  suggestItems.forEach((item, i) => {
+    const li = document.createElement("li");
+    li.textContent = item.label;
+    li.classList.toggle("active", i === suggestIndex);
+    // mousedown (not click) fires before the input's blur, so selecting a
+    // suggestion never steals focus away from the pipeline field first.
+    li.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      acceptSuggestion(i);
+    });
+    suggestBox.appendChild(li);
+  });
+}
+
+function closeSuggest() {
+  suggestItems = [];
+  suggestIndex = -1;
+  renderSuggest();
+}
+
+function updateSuggestions() {
+  const { items, tokenStart, tokenEnd } = getSuggestions(pipelineInput.value, pipelineInput.selectionStart);
+  suggestItems = items;
+  suggestRange = { tokenStart, tokenEnd };
+  suggestIndex = -1;
+  renderSuggest();
+}
+
+function acceptSuggestion(i) {
+  const item = suggestItems[i];
+  if (!item || !suggestRange) return;
+  const { tokenStart, tokenEnd } = suggestRange;
+  const value = pipelineInput.value;
+  pipelineInput.value = value.slice(0, tokenStart) + item.insertText + value.slice(tokenEnd);
+  const cursor = tokenStart + item.insertText.length;
+  pipelineInput.setSelectionRange(cursor, cursor);
+  closeSuggest();
+  pipelineInput.focus();
+  pipelineInput.dispatchEvent(new Event("input"));
+}
+
+const SUGGEST_KEYDOWN_KEYS = ["Escape", "Enter", "Tab", "ArrowUp", "ArrowDown"];
+for (const ev of ["input", "click", "keyup"]) {
+  pipelineInput.addEventListener(ev, (e) => {
+    // Escape/Enter/Tab/Arrow* are handled in keydown below - re-running
+    // suggestions on their keyup would re-open a dropdown just closed.
+    if (ev === "keyup" && SUGGEST_KEYDOWN_KEYS.includes(e.key)) return;
+    updateSuggestions();
+  });
+}
+pipelineInput.addEventListener("keydown", (e) => {
+  if (suggestItems.length === 0) return;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    suggestIndex = (suggestIndex + 1) % suggestItems.length;
+    renderSuggest();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    suggestIndex = (suggestIndex - 1 + suggestItems.length) % suggestItems.length;
+    renderSuggest();
+  } else if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault();
+    acceptSuggestion(suggestIndex === -1 ? 0 : suggestIndex);
+  } else if (e.key === "Escape") {
+    closeSuggest();
+  }
+});
+pipelineInput.addEventListener("blur", closeSuggest);
 
 for (const mode of ["wire", "explain"]) {
   $(`mode-${mode}`).addEventListener("click", () => {
