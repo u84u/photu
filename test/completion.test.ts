@@ -7,9 +7,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { generateBashCompletion } from "../src/cli/completion.ts";
 
-const bashAvailable = spawnSync("bash", ["-c", "true"]).status === 0;
+// On Windows, a bare "bash" on PATH can resolve to the WSL launcher stub
+// (System32\bash.exe) instead of a real bash binary. That stub re-serializes
+// argv when handing off to the Linux side, which mangles multi-line scripts
+// containing quotes/backticks - so prefer Git for Windows' real bash, which
+// runs the script directly with no such translation layer.
+const WINDOWS_GIT_BASH_PATHS = [
+  "C:\\Program Files\\Git\\bin\\bash.exe",
+  "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+  "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+];
+const BASH_BIN =
+  process.platform === "win32"
+    ? (WINDOWS_GIT_BASH_PATHS.find(existsSync) ?? "bash")
+    : "bash";
+
+const bashAvailable = spawnSync(BASH_BIN, ["-c", "true"]).status === 0;
 
 /** Runs _photu_completions with COMP_WORDS built from `words` (the full,
  * space-split invocation, last word is the one being completed) and
@@ -24,13 +40,13 @@ function complete(...words: string[]): string[] {
     _photu_completions
     printf '%s\\n' "${'$'}{COMPREPLY[@]}"
   `;
-  const res = spawnSync("bash", ["-c", bash], { encoding: "utf8" });
+  const res = spawnSync(BASH_BIN, ["-c", bash], { encoding: "utf8" });
   assert.equal(res.status, 0, res.stderr);
   return res.stdout.split("\n").filter(Boolean);
 }
 
 test("the generated script is syntactically valid bash", { skip: !bashAvailable }, () => {
-  const res = spawnSync("bash", ["-n"], { input: generateBashCompletion(), encoding: "utf8" });
+  const res = spawnSync(BASH_BIN, ["-n"], { input: generateBashCompletion(), encoding: "utf8" });
   assert.equal(res.status, 0, res.stderr);
 });
 
