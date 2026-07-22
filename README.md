@@ -1,5 +1,7 @@
 # photu
 
+[![test](https://github.com/u84u/photu/actions/workflows/test.yml/badge.svg)](https://github.com/u84u/photu/actions/workflows/test.yml)
+
 photu is a small command-line tool for batch image work. You build pipelines
 out of ordinary shell pipes, and the whole thing runs as one
 [libvips](https://www.libvips.org/) operation at the end, so it's fast and
@@ -147,6 +149,14 @@ There are also three utilities that aren't pipeline stages:
 
 JPEG, PNG, WebP, GIF, TIFF and AVIF, read and write. SVG can be read (it gets
 rasterized). `photu formats` gives the authoritative list for your install.
+
+Animated GIF, WebP and TIFF sources are read and written frame-by-frame -
+every stage, not just resize and crop, applies independently to each frame,
+so blur, sharpen, overlay and the rest all do the right thing on an animated
+input. Frame delay and loop count carry through unchanged. Writing an
+animated source to a format that has no concept of multiple frames (jpeg,
+png, avif in this build) is refused rather than silently flattened into one
+tall still image - pick gif, webp or tiff for animated output.
 
 ## Error handling
 

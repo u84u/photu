@@ -67,6 +67,17 @@ before(async () => {
     .toFile(join(dir, "logo.png"));
   mkdirSync(join(dir, "nested"));
   await sharp({ create: red }).jpeg().toFile(join(dir, "nested", "red.jpg"));
+
+  // 4-frame animated GIF, one solid color per frame - lets tests tell frames
+  // apart by sampling a single pixel instead of decoding real motion.
+  const animFrames = await Promise.all(
+    ["red", "green", "blue", "yellow"].map((background) =>
+      sharp({ create: { width: 20, height: 20, channels: 3 as const, background } }).png().toBuffer(),
+    ),
+  );
+  await sharp(animFrames, { join: { animated: true } })
+    .gif({ delay: [40, 80, 120, 160], loop: 2 })
+    .toFile(join(dir, "anim.gif"));
 });
 after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
@@ -178,6 +189,109 @@ test("overlay with opacity composites successfully", async () => {
   assert.equal(res.status, 0, res.stderr);
   const m = await sharp(`${out}/i/red.png`).metadata();
   assert.equal(`${m.width}x${m.height}`, "100x60");
+});
+
+test("animated GIF keeps every frame through resize + crop, cropped per-frame not off the joined canvas", async () => {
+  const res = pipeline(
+    `${dir}/anim.gif`,
+    ["resize", "10"],
+    ["crop", "8x8", "gravity=center"],
+    ["write", `${out}/anim/{name}.gif`],
+  );
+  assert.equal(res.status, 0, res.stderr);
+
+  const { data, info } = await sharp(`${out}/anim/anim.gif`, { animated: true })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  assert.equal(info.pages, 4, "all 4 source frames survived");
+  assert.equal(`${info.width}x${info.pageHeight}`, "8x8");
+
+  const pageBytes = info.width * info.pageHeight * info.channels;
+  const topLeft = (page: number) => [...data.subarray(page * pageBytes, page * pageBytes + 3)];
+  // GIF's palette quantizes slightly on the final write, so compare with
+  // tolerance - the point is each frame kept its own color, not exact bytes.
+  const closeTo = (actual: number[], expected: number[], label: string) => {
+    actual.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) <= 8, `${label}: ${actual} ~= ${expected}`));
+  };
+  closeTo(topLeft(0), [255, 0, 0], "frame 0 stayed red");
+  closeTo(topLeft(1), [0, 128, 0], "frame 1 stayed green");
+  closeTo(topLeft(2), [0, 0, 255], "frame 2 stayed blue");
+  closeTo(topLeft(3), [255, 255, 0], "frame 3 stayed yellow");
+});
+
+test("flip does not reverse frame order on animated input", async () => {
+  // Applying flip to the frames-stacked-into-one-tall-image view (rather
+  // than per split frame) flips the whole stack, which swaps frame 0 and
+  // frame 3 instead of mirroring each frame in place.
+  const res = pipeline(`${dir}/anim.gif`, ["flip"], ["write", `${out}/anim-flip/{name}.gif`]);
+  assert.equal(res.status, 0, res.stderr);
+
+  const { data, info } = await sharp(`${out}/anim-flip/anim.gif`, { animated: true })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  assert.equal(info.pages, 4);
+  const pageBytes = info.width * info.pageHeight * info.channels;
+  const mid = (p: number) => {
+    const off =
+      p * pageBytes + Math.floor(info.pageHeight / 2) * info.width * info.channels +
+      Math.floor(info.width / 2) * info.channels;
+    return [...data.subarray(off, off + 3)];
+  };
+  assert.deepEqual(mid(0), [255, 0, 0], "frame 0 is still first");
+  assert.deepEqual(mid(3), [255, 255, 0], "frame 3 is still last, not swapped with frame 0");
+});
+
+test("blur and sharpen don't bleed across frame boundaries on animated input", async () => {
+  // Run as a convolution over the stacked view, a blur/sharpen kernel spans
+  // into the neighboring frame's edge rows; per-frame processing can't.
+  const res = pipeline(`${dir}/anim.gif`, ["blur", "5"], ["sharpen"], ["write", `${out}/anim-blur/{name}.gif`]);
+  assert.equal(res.status, 0, res.stderr);
+
+  const { data, info } = await sharp(`${out}/anim-blur/anim.gif`, { animated: true })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const pageBytes = info.width * info.pageHeight * info.channels;
+  const closeTo = (actual: number[], expected: number[], label: string) =>
+    actual.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) <= 10, `${label}: ${actual} ~= ${expected}`));
+  const topRow = (p: number) => {
+    const off = p * pageBytes + Math.floor(info.width / 2) * info.channels;
+    return [...data.subarray(off, off + 3)];
+  };
+  closeTo(topRow(1), [0, 128, 0], "frame 1's top row is pure green, not blended with frame 0's red");
+  closeTo(topRow(2), [0, 0, 255], "frame 2's top row is pure blue, not blended with frame 1's green");
+});
+
+test("overlay and an explicit-angle rotate now succeed on animated input", async () => {
+  // Upscale first so the 20x20 logo only covers a corner of each frame - if
+  // it covered the whole frame, every output frame would be pixel-identical
+  // and the GIF encoder's own dedup (a preexisting, unrelated behavior) would
+  // collapse them to one page, which isn't what this test is checking.
+  const res = pipeline(
+    `${dir}/anim.gif`,
+    ["resize", "40", "upscale"],
+    ["rotate", "90"],
+    ["overlay", `${dir}/logo.png`, "gravity=southeast"],
+    ["write", `${out}/anim-overlay/{name}.gif`],
+  );
+  assert.equal(res.status, 0, res.stderr);
+  const meta = await sharp(`${out}/anim-overlay/anim.gif`, { animated: true }).metadata();
+  assert.equal(meta.pages, 4);
+  assert.equal(`${meta.width}x${meta.pageHeight}`, "40x40");
+});
+
+test("frame delay and loop count survive an animated round trip", async () => {
+  const res = pipeline(`${dir}/anim.gif`, ["resize", "10"], ["write", `${out}/anim-delay/{name}.gif`]);
+  assert.equal(res.status, 0, res.stderr);
+  const meta = await sharp(`${out}/anim-delay/anim.gif`, { animated: true }).metadata();
+  assert.deepEqual(meta.delay, [40, 80, 120, 160]);
+  assert.equal(meta.loop, 2);
+});
+
+test("writing animated frames to a format that can't keep them is refused", () => {
+  const res = pipeline(`${dir}/anim.gif`, ["write", `${out}/anim-flat/{name}.jpg`]);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /cannot write 4 animated frames to jpeg/);
+  assert.ok(!existsSync(`${out}/anim-flat/anim.jpg`));
 });
 
 test("output collisions are caught before anything is written", () => {

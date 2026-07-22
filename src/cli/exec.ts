@@ -158,82 +158,142 @@ function outputFormat(op: Op, file: string): string {
   return format;
 }
 
+/** Applies one transform stage (everything except `write`) to a single,
+ * ordinary (non-animated) sharp pipeline. Shared by the still-image path
+ * and, per split-out frame, by the animated path below - so every op only
+ * has to be correct for a single flat image, never for a page stack. */
+async function applyOp(img: sharp.Sharp, op: Op, file: string): Promise<sharp.Sharp> {
+  switch (op.op) {
+    case "resize":
+      return img.resize({
+        width: (op.width as number | null) ?? undefined,
+        height: (op.height as number | null) ?? undefined,
+        fit: op.fit as keyof sharp.FitEnum,
+        withoutEnlargement: !op.upscale,
+      });
+    case "crop":
+      return applyCrop(img, op, file);
+    case "rotate":
+      return img.rotate(op.angle as number, { background: op.background as string });
+    case "flip":
+      return img.flip();
+    case "mirror":
+      return img.flop();
+    case "grayscale":
+      return img.grayscale();
+    case "adjust":
+      return img.modulate({
+        brightness: op.brightness as number,
+        saturation: op.saturation as number,
+        hue: op.hue as number,
+      });
+    case "blur":
+      return op.sigma === null ? img.blur() : img.blur(op.sigma as number);
+    case "sharpen":
+      return op.sigma === null ? img.sharpen() : img.sharpen({ sigma: op.sigma as number });
+    case "overlay":
+      return img.composite([await overlayInput(op)]);
+    case "pad": {
+      const s = op.size as number;
+      return img.extend({ top: s, bottom: s, left: s, right: s, background: op.color as string });
+    }
+    default:
+      throw new Panic(
+        "EUNKNOWN",
+        `plan contains op '${op.op}' which this photu does not know - version mismatch in your pipeline?`,
+      );
+  }
+}
+
+function toFormatOpts(writeOp: Op, format: string): Record<string, unknown> {
+  const quality = writeOp.quality as number | null;
+  const opts: Record<string, unknown> = {};
+  if (quality !== null && format !== "png" && format !== "gif") opts.quality = quality;
+  if (writeOp.lossless && (format === "webp" || format === "avif")) opts.lossless = true;
+  return opts;
+}
+
+async function writeStill(img: sharp.Sharp, writeOp: Op, file: string, outPath: string): Promise<void> {
+  const format = outputFormat(writeOp, file);
+  if (format === "jpeg") img = img.flatten({ background: writeOp.background as string });
+  img = img.toFormat(format as keyof sharp.FormatEnum, toFormatOpts(writeOp, format));
+  await img.toFile(outPath);
+}
+
+// Formats this libvips build actually keeps multi-frame through a
+// re-encode. jpeg/png/avif accept a page-stacked pipeline without erroring
+// but silently flatten every frame into one tall still image, so animated
+// output is limited to the formats that round-tripped correctly in testing.
+const ANIMATED_OUTPUT_FORMATS = new Set(["gif", "webp", "tiff"]);
+const DELAY_AWARE_FORMATS = new Set(["gif", "webp"]);
+
+/** Animated sources (multi-frame GIF/WebP/TIFF) are split into independent
+ * per-frame images so every op above runs on a single flat frame - resize's
+ * resampling kernel, blur/sharpen's convolution and any op that needs
+ * current dimensions (crop, via materialize) would otherwise blend pixels
+ * across the frame boundary if run on the frames-stacked-into-one-tall-image
+ * view libvips uses internally. The frames are re-joined after processing. */
+async function processAnimated(
+  img: sharp.Sharp,
+  transformOps: Op[],
+  writeOp: Op,
+  file: string,
+  outPath: string,
+  pages: number,
+  meta: sharp.Metadata,
+): Promise<void> {
+  const format = outputFormat(writeOp, file);
+  if (!ANIMATED_OUTPUT_FORMATS.has(format)) {
+    runtimeFail(
+      file,
+      `cannot write ${pages} animated frames to ${format} - gif, webp and tiff are the only ` +
+        "formats this build keeps animated",
+    );
+  }
+
+  const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
+  const pageHeight = info.pageHeight ?? info.height;
+  const channels = info.channels as 1 | 2 | 3 | 4;
+  const frameBytes = info.width * pageHeight * channels;
+
+  const frames = await Promise.all(
+    Array.from({ length: pages }, async (_, p) => {
+      const raw = data.subarray(p * frameBytes, (p + 1) * frameBytes);
+      let frame = sharp(raw, { raw: { width: info.width, height: pageHeight, channels } });
+      for (const op of transformOps) frame = await applyOp(frame, op, file);
+      return frame.png().toBuffer(); // lossless, self-describing - safe to rejoin from
+    }),
+  );
+
+  let joined = sharp(frames, { join: { animated: true } });
+  const opts = toFormatOpts(writeOp, format);
+  if (DELAY_AWARE_FORMATS.has(format)) {
+    if (meta.delay) opts.delay = meta.delay;
+    if (meta.loop !== undefined) opts.loop = meta.loop;
+  }
+  joined = joined.toFormat(format as keyof sharp.FormatEnum, opts);
+  await joined.toFile(outPath);
+}
+
 async function processFile(file: string, ops: Op[], outPath: string): Promise<void> {
   const input = isUrl(file) ? await fetchBuffer(file) : file;
-  let img = sharp(input).rotate(); // EXIF auto-orient, always
+  // {animated: true} reads every frame of a GIF/WebP/TIFF source instead of
+  // just the first; it's a no-op for formats without pages.
+  const img = sharp(input, { animated: true }).rotate(); // EXIF auto-orient, always
+  const meta = await img.metadata();
+  const pages = meta.pages ?? 1;
 
-  for (const op of ops) {
-    switch (op.op) {
-      case "resize":
-        img = img.resize({
-          width: (op.width as number | null) ?? undefined,
-          height: (op.height as number | null) ?? undefined,
-          fit: op.fit as keyof sharp.FitEnum,
-          withoutEnlargement: !op.upscale,
-        });
-        break;
-      case "crop":
-        img = await applyCrop(img, op, file);
-        break;
-      case "rotate":
-        img = img.rotate(op.angle as number, { background: op.background as string });
-        break;
-      case "flip":
-        img = img.flip();
-        break;
-      case "mirror":
-        img = img.flop();
-        break;
-      case "grayscale":
-        img = img.grayscale();
-        break;
-      case "adjust":
-        img = img.modulate({
-          brightness: op.brightness as number,
-          saturation: op.saturation as number,
-          hue: op.hue as number,
-        });
-        break;
-      case "blur":
-        img = op.sigma === null ? img.blur() : img.blur(op.sigma as number);
-        break;
-      case "sharpen":
-        img = op.sigma === null ? img.sharpen() : img.sharpen({ sigma: op.sigma as number });
-        break;
-      case "overlay":
-        img = img.composite([await overlayInput(op)]);
-        break;
-      case "pad": {
-        const s = op.size as number;
-        img = img.extend({
-          top: s,
-          bottom: s,
-          left: s,
-          right: s,
-          background: op.color as string,
-        });
-        break;
-      }
-      case "write": {
-        const format = outputFormat(op, file);
-        if (format === "jpeg") {
-          img = img.flatten({ background: op.background as string });
-        }
-        const quality = op.quality as number | null;
-        const opts: Record<string, unknown> = {};
-        if (quality !== null && format !== "png" && format !== "gif") opts.quality = quality;
-        if (op.lossless && (format === "webp" || format === "avif")) opts.lossless = true;
-        img = img.toFormat(format as keyof sharp.FormatEnum, opts);
-        await img.toFile(outPath);
-        return;
-      }
-      default:
-        throw new Panic(
-          "EUNKNOWN",
-          `plan contains op '${op.op}' which this photu does not know - version mismatch in your pipeline?`,
-        );
-    }
+  // `write` is always the last op (execute() below relies on the same
+  // invariant), so everything before it is a transform stage.
+  const writeOp = ops[ops.length - 1];
+  const transformOps = ops.slice(0, -1);
+
+  if (pages === 1) {
+    let still = img;
+    for (const op of transformOps) still = await applyOp(still, op, file);
+    return writeStill(still, writeOp, file, outPath);
   }
+  return processAnimated(img, transformOps, writeOp, file, outPath, pages, meta);
 }
 
 // --------------------------------------------------------------------------
