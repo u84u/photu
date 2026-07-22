@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,28 @@ const MAIN = fileURLToPath(new URL("../src/cli/main.ts", import.meta.url));
 function run(args: string[], input = "") {
   const res = spawnSync(process.execPath, [MAIN, ...args], { input, encoding: "utf8" });
   return { status: res.status, stdout: res.stdout, stderr: res.stderr };
+}
+
+/** Chains stages through real OS pipes between freshly-spawned processes,
+ * the way a shell pipeline does - unlike `run()`/`spawnSync`, which hands a
+ * child its entire input already buffered before the child starts. That
+ * distinction matters: a stage reading stdin with a synchronous read can
+ * race a live upstream process that hasn't flushed yet, a bug spawnSync's
+ * pre-buffered input can never exercise. */
+function runPiped(stages: string[][]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolvePromise, reject) => {
+    const procs = stages.map((args) => spawn(process.execPath, [MAIN, ...args]));
+    for (let i = 0; i < procs.length - 1; i++) {
+      procs[i].stdout.pipe(procs[i + 1].stdin);
+    }
+    const last = procs[procs.length - 1];
+    let stdout = "";
+    let stderr = "";
+    last.stdout.on("data", (d) => (stdout += d));
+    for (const p of procs) p.stderr.on("data", (d) => (stderr += d));
+    for (const p of procs) p.on("error", reject);
+    last.on("close", (code) => resolvePromise({ status: code, stdout, stderr }));
+  });
 }
 
 const dir = mkdtempSync(join(tmpdir(), "photu-test-"));
@@ -75,6 +97,25 @@ test("a full pipeline accumulates normalized ops", () => {
     { op: "resize", width: 1600, height: null, fit: "inside", upscale: false },
     { op: "grayscale" },
   ]);
+});
+
+test("a live OS pipe between freshly spawned stages is not raced (regression: readFileSync(0) could throw EAGAIN before the upstream stage had written anything)", async () => {
+  // Run several times: the bug was a startup race, not a deterministic
+  // failure, so a single pass could pass by luck even with the bug back.
+  for (let i = 0; i < 8; i++) {
+    const { status, stdout } = await runPiped([
+      ["read", join(dir, "*.jpg")],
+      ["resize", "1600"],
+      ["grayscale"],
+    ]);
+    assert.equal(status, 0);
+    const plan = parsePlan(stdout) as OkPlan;
+    assert.ok(!isErrorPlan(plan));
+    assert.deepEqual(plan.ops, [
+      { op: "resize", width: 1600, height: null, fit: "inside", upscale: false },
+      { op: "grayscale" },
+    ]);
+  }
 });
 
 test("garbage stdin becomes an ENOTPLAN error plan", () => {

@@ -9,7 +9,6 @@
 // the failure propagates in-band; stages that *receive* an error plan
 // pass it through verbatim and exit nonzero without re-printing.
 
-import { readFileSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
@@ -35,8 +34,21 @@ function creatorFail(stage: string, code: string, message: string): void {
   process.exitCode = 1;
 }
 
+/** Reads all of stdin to completion. Unlike a synchronous read of fd 0, this
+ * waits for data rather than racing the upstream stage: a live pipe between
+ * two freshly-spawned processes has no data queued yet when the reader
+ * starts, and a sync read of a non-blocking pipe fd fails in that case
+ * instead of blocking. */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** Returns null when the failure was already handled. */
-function stdinPlan(command: string): Plan | null {
+async function stdinPlan(command: string): Promise<Plan | null> {
   if (process.stdin.isTTY) {
     creatorFail(
       command,
@@ -45,12 +57,7 @@ function stdinPlan(command: string): Plan | null {
     );
     return null;
   }
-  let text: string;
-  try {
-    text = readFileSync(0, "utf8");
-  } catch {
-    text = "";
-  }
+  const text = await readStdin();
   try {
     return parsePlan(text);
   } catch (err) {
@@ -148,8 +155,8 @@ async function doInfo(tokens: string[]): Promise<void> {
   }
 }
 
-function doTransform(command: string, tokens: string[]): void {
-  const plan = stdinPlan(command);
+async function doTransform(command: string, tokens: string[]): Promise<void> {
+  const plan = await stdinPlan(command);
   if (plan === null) return;
   if (isErrorPlan(plan)) {
     emit(plan);
@@ -166,7 +173,7 @@ function doTransform(command: string, tokens: string[]): void {
 }
 
 async function doWrite(tokens: string[]): Promise<void> {
-  const plan = stdinPlan("write");
+  const plan = await stdinPlan("write");
   if (plan === null) return;
   if (isErrorPlan(plan)) {
     process.exitCode = 1;
@@ -186,13 +193,13 @@ async function doWrite(tokens: string[]): Promise<void> {
   }
 }
 
-function doExplain(tokens: string[]): void {
+async function doExplain(tokens: string[]): Promise<void> {
   if (tokens.length > 0) {
     stderr(`explain takes no arguments, got '${tokens[0]}'`);
     process.exitCode = 1;
     return;
   }
-  const plan = stdinPlan("explain");
+  const plan = await stdinPlan("explain");
   if (plan === null) return;
   const out: string[] = [`photu plan (protocol ${plan.photu})`];
   if (isErrorPlan(plan)) {
