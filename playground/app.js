@@ -4,12 +4,13 @@
 // the terminal experience by construction.
 
 import Vips from "/vips/vips-es6.js";
-import { normalizeOp, COMMANDS, FITS, GRAVITIES } from "/core/ops.js";
+import { normalizeOp, COMMANDS } from "/core/ops.js";
 import { newPlan, errorPlan, isErrorPlan, serializePlan, Panic } from "/core/plan.js";
 import { renderPipeline, ExecError } from "/exec-wasm.js";
+import { COMMAND_META } from "/core/completion-meta.js";
 import { configure as configureCompletions, getSuggestions } from "/completions.js";
 
-configureCompletions(COMMANDS, FITS, GRAVITIES);
+configureCompletions(COMMANDS, COMMAND_META);
 
 const $ = (id) => document.getElementById(id);
 const status = $("status");

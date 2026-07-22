@@ -1,33 +1,16 @@
 // Pipeline autocomplete for the playground. Pure (no DOM, no imports of its
 // own) so it's directly testable - see test/completions.test.ts. The caller
-// hands in COMMANDS/FITS/GRAVITIES via configure() rather than this module
-// importing "/core/ops.js" itself, since that's a browser-only URL path
-// that Node can't resolve when a test imports this file directly.
-//
-// Mirrors ops.ts's SPECS: which option keys and bare flags each command
-// accepts, and which of those keys are a closed enum (vs free text like
-// background=/color=, which get key completion but no value suggestions).
-// ops.ts has no declarative schema to read this from - if a command's
-// options change there, update this table too.
+// hands in COMMANDS and COMMAND_META (from core/ops.js and
+// core/completion-meta.js - the same metadata the CLI's bash completions
+// use, see src/core/completion-meta.ts) via configure(), rather than this
+// module importing "/core/..." itself, since those are browser-only URL
+// paths that Node can't resolve when a test imports this file directly.
 let COMMANDS = [];
 let COMMAND_META = {};
 
-export function configure(commands, fits, gravities) {
+export function configure(commands, commandMeta) {
   COMMANDS = commands;
-  COMMAND_META = {
-    resize: { flags: ["upscale"], options: { fit: fits } },
-    crop: { flags: [], options: { gravity: gravities } },
-    rotate: { flags: [], options: { background: null } },
-    flip: { flags: [], options: {} },
-    mirror: { flags: [], options: {} },
-    grayscale: { flags: [], options: {} },
-    adjust: { flags: [], options: { brightness: null, saturation: null, hue: null } },
-    blur: { flags: [], options: {} },
-    sharpen: { flags: [], options: {} },
-    overlay: { flags: [], options: { gravity: gravities, opacity: null } },
-    pad: { flags: [], options: { color: null } },
-    write: { flags: ["lossless"], options: { quality: null } },
-  };
+  COMMAND_META = commandMeta;
 }
 
 /** Which pipe segment (by absolute offsets) cursorPos falls in. */

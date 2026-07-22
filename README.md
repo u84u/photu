@@ -31,6 +31,13 @@ npm i -g photu
 Needs Node 22 or newer. libvips comes prebuilt with the sharp dependency, so
 there is nothing to compile.
 
+Bash completions for commands, options and `fit=`/`gravity=` values: add this
+to `~/.bashrc`:
+
+```sh
+source <(photu completion)
+```
+
 ## How it works
 
 The pipe between stages doesn't carry image data. Each stage appends its

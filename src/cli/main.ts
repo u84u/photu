@@ -222,6 +222,7 @@ const USAGE = `usage: photu <command> [args]
   photu explain              pretty-print the plan arriving on stdin
   photu info "<glob>"        show format, dimensions, size of matching files
   photu formats              list readable/writable formats
+  photu completion           print a bash completion script (see its output for install)
 
 example:
   photu read "*.jpg" | photu resize 1600 | photu write "out/{name}.webp"`;
@@ -240,6 +241,11 @@ async function main(): Promise<void> {
   if (command === "formats") {
     const exec = await import("./exec.ts");
     return exec.formats();
+  }
+  if (command === "completion") {
+    const { generateBashCompletion } = await import("./completion.ts");
+    process.stdout.write(generateBashCompletion());
+    return;
   }
   if (COMMANDS.includes(command)) return doTransform(command, tokens);
   stderr(`unknown command '${command}' - run 'photu help'`);

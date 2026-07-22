@@ -1,6 +1,6 @@
 {
   "name": "photu",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "photu (ફોટુ) — a shell-pipe language for image manipulation, built on libvips",
   "type": "module",
   "bin": {

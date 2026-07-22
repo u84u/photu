@@ -4,10 +4,11 @@
 // and is verified manually in a browser instead.
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import { COMMANDS, FITS, GRAVITIES } from "../src/core/ops.ts";
+import { COMMANDS } from "../src/core/ops.ts";
+import { COMMAND_META } from "../src/core/completion-meta.ts";
 import { configure, getSuggestions } from "../playground/completions.js";
 
-before(() => configure(COMMANDS, FITS, GRAVITIES));
+before(() => configure(COMMANDS, COMMAND_META));
 
 function labels(text: string, cursorPos = text.length) {
   return getSuggestions(text, cursorPos).items.map((i) => i.label);

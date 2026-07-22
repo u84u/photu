@@ -139,3 +139,10 @@ test("unknown command and bare invocation fail with usage pointers", () => {
   const help = run(["help"]);
   assert.equal(help.status, 0);
 });
+
+test("completion prints a bash script to stdout, not stderr", () => {
+  const res = run(["completion"]);
+  assert.equal(res.status, 0);
+  assert.equal(res.stderr, "");
+  assert.match(res.stdout, /complete -F _photu_completions photu/);
+});
