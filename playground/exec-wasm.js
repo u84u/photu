@@ -359,24 +359,32 @@ export async function renderPipeline(vips, inputBytes, ops, fileName = "image.pn
     final = joinFrames(vips, processedFrames, pageHeight, delays, loop);
   }
 
-  const opts = {};
-  if (writeOp != null) {
-    if (format === ".jpg") {
-      final = final.flatten({ background: parseColor(writeOp.background) });
+  const frameWidth = processedFrames[0].width;
+  const frameHeight = pageHeight;
+
+  let bytes;
+  if (animated && format === ".gif") {
+    // wasm-vips' gifsaveBuffer doesn't accept a `delay` option, so store
+    // per-frame delays as image metadata before saving.
+    final.setArrayDouble("delay", delays ?? []);
+    bytes = final.gifsaveBuffer({ page_height: frameHeight });
+  } else {
+    const opts = {};
+    if (writeOp != null) {
+      if (format === ".jpg") {
+        final = final.flatten({ background: parseColor(writeOp.background) });
+      }
+      if (writeOp.quality !== null && format !== ".png" && format !== ".gif") {
+        opts.Q = writeOp.quality;
+      }
+      if (writeOp.lossless && (format === ".webp" || format === ".avif")) {
+        opts.lossless = true;
+      }
     }
-    if (writeOp.quality !== null && format !== ".png" && format !== ".gif") {
-      opts.Q = writeOp.quality;
-    }
-    if (writeOp.lossless && (format === ".webp" || format === ".avif")) {
-      opts.lossless = true;
-    }
-    if (animated && format === ".gif") {
-      // GIF save with animation metadata already on the image
-    }
+    bytes = final.writeToBuffer(format, opts);
   }
 
-  const width = final.width;
-  const height = final.height;
-  const bytes = final.writeToBuffer(format, opts);
+  const width = animated ? frameWidth : final.width;
+  const height = animated ? frameHeight : final.height;
   return { bytes, ext: format.slice(1), width, height };
 }

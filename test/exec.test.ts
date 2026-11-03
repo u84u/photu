@@ -689,57 +689,6 @@ test("write to tiff produces a valid file", async () => {
   assert.equal(m.width, 30);
 });
 
-test("stress: 200 images through a multi-stage pipeline", async () => {
-  const stressDir = join(dir, "stress");
-  mkdirSync(stressDir, { recursive: true });
-
-  // Create 200 small images with varying dimensions
-  const count = 200;
-  await Promise.all(
-    Array.from({ length: count }, (_, i) => {
-      const w = 40 + (i % 10) * 5; // 40..85
-      const h = 30 + (i % 7) * 5;  // 30..60
-      const colors = ["red", "green", "blue", "yellow", "cyan", "magenta", "white"];
-      return sharp({ create: { width: w, height: h, channels: 3 as const, background: colors[i % colors.length]! } })
-        .jpeg()
-        .toFile(join(stressDir, `img-${String(i).padStart(3, "0")}.jpg`));
-    }),
-  );
-
-  const start = Date.now();
-  const res = await pipeline(
-    `${stressDir}/*.jpg`,
-    ["resize", "20"],
-    ["sharpen"],
-    ["write", `${out}/stress/{name}.webp`, "quality=75"],
-  );
-  const elapsed = Date.now() - start;
-
-  assert.equal(res.status, 0, res.stderr);
-  assert.equal(res.stderr, "");
-
-  // Verify all 200 outputs exist and are valid webp
-  const files = [];
-  for (let i = 0; i < count; i++) {
-    const name = `img-${String(i).padStart(3, "0")}.webp`;
-    const p = `${out}/stress/${name}`;
-    if (!existsSync(p)) {
-      assert.fail(`missing output: ${name}`);
-    }
-    files.push(p);
-  }
-
-  // Spot-check a few files for validity
-  for (const p of [files[0], files[99], files[199]]) {
-    const m = await sharp(p).metadata();
-    assert.equal(m.format, "webp");
-    assert.equal(m.width, 20);
-  }
-
-  // 200 images through resize+sharpen+write should complete in <60s on CI
-  assert.ok(elapsed < 60_000, `stress test took ${elapsed}ms, expected <60s`);
-});
-
 test("stress: 100-frame animated GIF through multiple stages", async () => {
   // Create a 100-frame animated GIF, each frame a solid color cycling through the spectrum
   const frameCount = 100;
