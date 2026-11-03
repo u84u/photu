@@ -1,7 +1,6 @@
-// Verifies the playground's wasm-vips executor using the same normalized
-// ops the CLI produces. Results are decoded with sharp to check them.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import sharp from "sharp";
 import Vips from "wasm-vips";
 import { normalizeOp } from "../src/core/ops.ts";
@@ -13,6 +12,12 @@ let vips: Awaited<ReturnType<typeof Vips>>;
 let red: Buffer;
 let semi: Buffer;
 
+// A local HTTP server stands in for a remote host (for overlay URL tests).
+let server: ReturnType<typeof createServer>;
+let overlayBase: string;
+
+let animGif: Buffer;
+
 before(async () => {
   vips = await Vips();
   red = await sharp({ create: { width: 100, height: 60, channels: 3, background: "red" } })
@@ -23,8 +28,28 @@ before(async () => {
   })
     .png()
     .toBuffer();
+
+  const overlayImg = await sharp({ create: { width: 30, height: 30, channels: 4, background: "blue" } })
+    .png()
+    .toBuffer();
+  server = createServer((req, res) => {
+    if (req.url === "/overlay.png") {
+      res.writeHead(200, { "content-type": "image/png" });
+      res.end(overlayImg);
+    } else {
+      res.writeHead(404);
+      res.end("not found");
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  overlayBase = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+
+  animGif = await makeAnimatedGif(4, 20, 20, [40, 80, 120, 160]);
 });
-after(() => vips.shutdown());
+after(async () => {
+  vips.shutdown();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
 
 function ops(...stages: [string, string[]][]) {
   return stages.map(([cmd, tokens]) => normalizeOp(cmd, tokens));
@@ -38,44 +63,46 @@ test("parseColor handles names and hex", () => {
 });
 
 test("resize inside preserves aspect and refuses upscale by default", async () => {
-  let out = renderPipeline(vips, red, ops(["resize", ["50"]]));
+  let out = await renderPipeline(vips, red, ops(["resize", ["50"]]));
   assert.equal(`${out.width}x${out.height}`, "50x30");
 
-  out = renderPipeline(vips, red, ops(["resize", ["400"]]));
+  out = await renderPipeline(vips, red, ops(["resize", ["400"]]));
   assert.equal(out.width, 100, "no upscale");
 
-  out = renderPipeline(vips, red, ops(["resize", ["400", "upscale"]]));
+  out = await renderPipeline(vips, red, ops(["resize", ["400", "upscale"]]));
   assert.equal(out.width, 400);
 });
 
-test("resize cover fills both dimensions", () => {
-  const out = renderPipeline(vips, red, ops(["resize", ["40x40", "fit=cover", "upscale"]]));
+test("resize cover fills both dimensions", async () => {
+  const out = await renderPipeline(vips, red, ops(["resize", ["40x40", "fit=cover", "upscale"]]));
   assert.equal(`${out.width}x${out.height}`, "40x40");
 });
 
-test("crop cuts without scaling and enforces bounds", () => {
-  const out = renderPipeline(vips, red, ops(["crop", ["20x30"]]));
+test("crop cuts without scaling and enforces bounds", async () => {
+  const out = await renderPipeline(vips, red, ops(["crop", ["20x30"]]));
   assert.equal(`${out.width}x${out.height}`, "20x30");
 
-  const region = renderPipeline(vips, red, ops(["crop", ["30x30+70+30"]]));
+  const region = await renderPipeline(vips, red, ops(["crop", ["30x30+70+30"]]));
   assert.equal(`${region.width}x${region.height}`, "30x30");
 
-  assert.throws(
-    () => renderPipeline(vips, red, ops(["crop", ["30x30+80+40"]])),
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, red, ops(["crop", ["30x30+80+40"]]));
+    },
     (e: ExecError) => e.code === "ERUNTIME" && /exceeds image 100x60/.test(e.message),
   );
 });
 
-test("rotate 90 swaps dimensions; arbitrary angles run", () => {
-  const out = renderPipeline(vips, red, ops(["rotate", ["90"]]));
+test("rotate 90 swaps dimensions; arbitrary angles run", async () => {
+  const out = await renderPipeline(vips, red, ops(["rotate", ["90"]]));
   assert.equal(`${out.width}x${out.height}`, "60x100");
 
-  const skew = renderPipeline(vips, red, ops(["rotate", ["45", "background=white"]]));
+  const skew = await renderPipeline(vips, red, ops(["rotate", ["45", "background=white"]]));
   assert.ok(skew.width > 100, "bounding box grows");
 });
 
-test("flip, mirror, grayscale, adjust, blur, sharpen all execute", () => {
-  const out = renderPipeline(
+test("flip, mirror, grayscale, adjust, blur, sharpen all execute", async () => {
+  const out = await renderPipeline(
     vips,
     red,
     ops(
@@ -90,40 +117,70 @@ test("flip, mirror, grayscale, adjust, blur, sharpen all execute", () => {
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
-test("pad extends dimensions with a color", () => {
-  const out = renderPipeline(vips, red, ops(["pad", ["10", "color=#00ff00"]]));
+test("pad extends dimensions with a color", async () => {
+  const out = await renderPipeline(vips, red, ops(["pad", ["10", "color=#00ff00"]]));
   assert.equal(`${out.width}x${out.height}`, "120x80");
 });
 
 test("write controls format; jpeg flattens alpha", async () => {
-  const webp = renderPipeline(vips, red, ops(["resize", ["50"]], ["write", ["o.webp", "quality=70"]]));
+  const webp = await renderPipeline(vips, red, ops(["resize", ["50"]], ["write", ["o.webp", "quality=70"]]));
   assert.equal(webp.ext, "webp");
   assert.equal((await sharp(Buffer.from(webp.bytes)).metadata()).format, "webp");
 
-  const jpg = renderPipeline(vips, semi, ops(["write", ["o.jpg"]]));
+  const jpg = await renderPipeline(vips, semi, ops(["write", ["o.jpg"]]));
   const m = await sharp(Buffer.from(jpg.bytes)).metadata();
   assert.equal(m.format, "jpeg");
   assert.equal(m.channels, 3, "alpha flattened");
 
-  const avif = renderPipeline(vips, red, ops(["write", ["o.avif", "quality=50"]]));
+  const avif = await renderPipeline(vips, red, ops(["write", ["o.avif", "quality=50"]]));
   assert.equal((await sharp(Buffer.from(avif.bytes)).metadata()).format, "heif");
 });
 
 test("write {ext} keeps the source format via the file name", async () => {
-  const out = renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo.png");
+  const out = await renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo.png");
   assert.equal(out.ext, "png");
   assert.equal((await sharp(Buffer.from(out.bytes)).metadata()).format, "png");
 });
 
 test("no write op defaults to png preview", async () => {
-  const out = renderPipeline(vips, red, ops(["resize", ["30"]]));
+  const out = await renderPipeline(vips, red, ops(["resize", ["30"]]));
   assert.equal(out.ext, "png");
   assert.equal((await sharp(Buffer.from(out.bytes)).metadata()).format, "png");
 });
 
-test("overlay reports itself unsupported", () => {
-  assert.throws(
-    () => renderPipeline(vips, red, ops(["overlay", ["logo.png"]])),
+test("overlay composites a URL image at default gravity with full opacity", async () => {
+  const out = await renderPipeline(
+    vips,
+    red,
+    ops(["overlay", [`${overlayBase}/overlay.png`]]),
+    "photo.png",
+  );
+  assert.equal(`${out.width}x${out.height}`, "100x60");
+  const m = await sharp(Buffer.from(out.bytes)).metadata();
+  assert.equal(m.format, "png");
+  // Center pixel should be influenced by blue overlay (red image has center at 50,30)
+  const { data } = await sharp(Buffer.from(out.bytes)).raw().toBuffer({ resolveWithObject: true });
+  const center = data[30 * 100 * 3 + 50 * 3];
+  assert.ok(center! < 255, "blue overlay darkened the red center pixel");
+});
+
+test("overlay with opacity less than 1 runs without error", async () => {
+  const partial = await renderPipeline(
+    vips,
+    red,
+    ops(["overlay", [`${overlayBase}/overlay.png`, "opacity=0.5"]]),
+    "photo.png",
+  );
+  assert.equal(partial.ext, "png");
+  assert.equal(partial.width, 100);
+  assert.equal(partial.height, 60);
+});
+
+test("overlay with local path fails in playground", async () => {
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, red, ops(["overlay", ["logo.png"]]), "photo.png");
+    },
     (e: ExecError) => e.code === "EUNSUPPORTED",
   );
 });
@@ -153,26 +210,26 @@ test("parseColor rejects invalid hex formats", () => {
   assert.throws(() => parseColor("rgb(255,0,0)"), (e: ExecError) => e.code === "EBADARG");
 });
 
-test("resize height-only constrains by height", () => {
+test("resize height-only constrains by height", async () => {
   // red is 100x60, x30 should halve height and scale width proportionally
-  const out = renderPipeline(vips, red, ops(["resize", ["x30"]]));
+  const out = await renderPipeline(vips, red, ops(["resize", ["x30"]]));
   assert.equal(`${out.width}x${out.height}`, "50x30");
 });
 
-test("resize fit=contain letterboxes inside both dimensions", () => {
+test("resize fit=contain letterboxes inside both dimensions", async () => {
   // 100x60 image into 40x40 — should fit inside (40x24) then embed
-  const out = renderPipeline(vips, red, ops(["resize", ["40x40", "fit=contain", "upscale"]]));
+  const out = await renderPipeline(vips, red, ops(["resize", ["40x40", "fit=contain", "upscale"]]));
   assert.equal(`${out.width}x${out.height}`, "40x40");
 });
 
-test("resize fit=fill stretches to exact dimensions", () => {
-  const out = renderPipeline(vips, red, ops(["resize", ["40x80", "fit=fill", "upscale"]]));
+test("resize fit=fill stretches to exact dimensions", async () => {
+  const out = await renderPipeline(vips, red, ops(["resize", ["40x80", "fit=fill", "upscale"]]));
   assert.equal(`${out.width}x${out.height}`, "40x80");
 });
 
-test("resize fit=outside uses the larger scale", () => {
+test("resize fit=outside uses the larger scale", async () => {
   // 100x60 into 40x40 — outside scales by max(40/100, 40/60)=0.667 → 67x40
-  const out = renderPipeline(vips, red, ops(["resize", ["40x40", "fit=outside", "upscale"]]));
+  const out = await renderPipeline(vips, red, ops(["resize", ["40x40", "fit=outside", "upscale"]]));
   assert.equal(`${out.width}x${out.height}`, "67x40");
 });
 
@@ -189,83 +246,83 @@ test("crop with all nine gravity values", async () => {
     ["northwest", "5,0"],
   ];
   for (const [g] of gravities) {
-    const out = renderPipeline(vips, red, ops(["crop", ["30x30", `gravity=${g}`]]));
+    const out = await renderPipeline(vips, red, ops(["crop", ["30x30", `gravity=${g}`]]));
     assert.equal(`${out.width}x${out.height}`, "30x30", `gravity=${g}`);
   }
 });
 
-test("rotate 0 is a no-op", () => {
-  const out = renderPipeline(vips, red, ops(["rotate", ["0"]]));
+test("rotate 0 is a no-op", async () => {
+  const out = await renderPipeline(vips, red, ops(["rotate", ["0"]]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
-test("rotate 180 preserves dimensions", () => {
-  const out = renderPipeline(vips, red, ops(["rotate", ["180"]]));
+test("rotate 180 preserves dimensions", async () => {
+  const out = await renderPipeline(vips, red, ops(["rotate", ["180"]]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
-test("rotate 270 swaps dimensions like -90", () => {
-  const out270 = renderPipeline(vips, red, ops(["rotate", ["270"]]));
+test("rotate 270 swaps dimensions like -90", async () => {
+  const out270 = await renderPipeline(vips, red, ops(["rotate", ["270"]]));
   assert.equal(`${out270.width}x${out270.height}`, "60x100");
 
-  const outNeg = renderPipeline(vips, red, ops(["rotate", ["-90"]]));
+  const outNeg = await renderPipeline(vips, red, ops(["rotate", ["-90"]]));
   assert.equal(`${outNeg.width}x${outNeg.height}`, "60x100");
 });
 
-test("rotate 360 is a no-op", () => {
-  const out = renderPipeline(vips, red, ops(["rotate", ["360"]]));
+test("rotate 360 is a no-op", async () => {
+  const out = await renderPipeline(vips, red, ops(["rotate", ["360"]]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
-test("rotate fractional angle works", () => {
-  const out = renderPipeline(vips, red, ops(["rotate", ["45.5", "background=white"]]));
+test("rotate fractional angle works", async () => {
+  const out = await renderPipeline(vips, red, ops(["rotate", ["45.5", "background=white"]]));
   assert.ok(out.width > 100, "bounding box grows for non-90 rotation");
 });
 
-test("blur with default sigma (null) uses a reasonable default", () => {
-  const out = renderPipeline(vips, red, ops(["blur", []]));
+test("blur with default sigma (null) uses a reasonable default", async () => {
+  const out = await renderPipeline(vips, red, ops(["blur", []]));
   assert.equal(`${out.width}x${out.height}`, "100x60", "dimensions unchanged");
 });
 
-test("blur with explicit sigma", () => {
-  const out = renderPipeline(vips, red, ops(["blur", ["5"]]));
+test("blur with explicit sigma", async () => {
+  const out = await renderPipeline(vips, red, ops(["blur", ["5"]]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
-test("sharpen with default sigma (null)", () => {
-  const out = renderPipeline(vips, red, ops(["sharpen", []]));
+test("sharpen with default sigma (null)", async () => {
+  const out = await renderPipeline(vips, red, ops(["sharpen", []]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
-test("sharpen with explicit sigma", () => {
-  const out = renderPipeline(vips, red, ops(["sharpen", ["2"]]));
+test("sharpen with explicit sigma", async () => {
+  const out = await renderPipeline(vips, red, ops(["sharpen", ["2"]]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
-test("adjust with all three knobs at extremes", () => {
-  const out = renderPipeline(vips, red, ops(["adjust", ["brightness=0.1", "saturation=3", "hue=180"]]));
+test("adjust with all three knobs at extremes", async () => {
+  const out = await renderPipeline(vips, red, ops(["adjust", ["brightness=0.1", "saturation=3", "hue=180"]]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
-test("adjust with brightness=0 (fully dark)", () => {
-  const out = renderPipeline(vips, red, ops(["adjust", ["brightness=0"]]));
+test("adjust with brightness=0 (fully dark)", async () => {
+  const out = await renderPipeline(vips, red, ops(["adjust", ["brightness=0"]]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
 test("pad with all named colors", async () => {
   for (const color of ["black", "white", "red", "green", "blue"]) {
-    const out = renderPipeline(vips, red, ops(["pad", ["5", `color=${color}`]]));
+    const out = await renderPipeline(vips, red, ops(["pad", ["5", `color=${color}`]]));
     assert.equal(`${out.width}x${out.height}`, "110x70", `pad color=${color}`);
   }
 });
 
-test("pad with hex color", () => {
-  const out = renderPipeline(vips, red, ops(["pad", ["10", "color=#ff8000"]]));
+test("pad with hex color", async () => {
+  const out = await renderPipeline(vips, red, ops(["pad", ["10", "color=#ff8000"]]));
   assert.equal(`${out.width}x${out.height}`, "120x80");
 });
 
 test("write lossless webp", async () => {
-  const out = renderPipeline(vips, red, ops(["resize", ["30"]], ["write", ["o.webp", "lossless"]]));
+  const out = await renderPipeline(vips, red, ops(["resize", ["30"]], ["write", ["o.webp", "lossless"]]));
   assert.equal(out.ext, "webp");
   const m = await sharp(Buffer.from(out.bytes)).metadata();
   assert.equal(m.format, "webp");
@@ -273,71 +330,77 @@ test("write lossless webp", async () => {
 });
 
 test("write lossless avif", async () => {
-  const out = renderPipeline(vips, red, ops(["write", ["o.avif", "lossless"]]));
+  const out = await renderPipeline(vips, red, ops(["write", ["o.avif", "lossless"]]));
   assert.equal(out.ext, "avif");
   const m = await sharp(Buffer.from(out.bytes)).metadata();
   assert.ok(String(m.format) === "avif" || String(m.format) === "heif");
 });
 
 test("write with quality parameter is accepted", async () => {
-  const out = renderPipeline(vips, red, ops(["write", ["o.webp", "quality=50"]]));
+  const out = await renderPipeline(vips, red, ops(["write", ["o.webp", "quality=50"]]));
   assert.equal(out.ext, "webp");
   const m = await sharp(Buffer.from(out.bytes)).metadata();
   assert.equal(m.format, "webp");
 });
 
-test("write {ext} with tiff source name resolves to tif extension", () => {
-  const out = renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo.tiff");
+test("write {ext} with tiff source name resolves to tif extension", async () => {
+  const out = await renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo.tiff");
   assert.equal(out.ext, "tif");
 });
 
 test("write {ext} with webp source name keeps webp format", async () => {
-  const out = renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo.webp");
+  const out = await renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo.webp");
   assert.equal(out.ext, "webp");
   const m = await sharp(Buffer.from(out.bytes)).metadata();
   assert.equal(m.format, "webp");
 });
 
-test("write {ext} with unrecognized extension fails", () => {
-  assert.throws(
-    () => renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo.bmp"),
+test("write {ext} with unrecognized extension fails", async () => {
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo.bmp");
+    },
     (e: ExecError) => e.code === "ERUNTIME" && /unrecognized/.test(e.message),
   );
 });
 
-test("write {ext} with no extension fails", () => {
-  assert.throws(
-    () => renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo"),
+test("write {ext} with no extension fails", async () => {
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, red, ops(["write", ["out/{name}.{ext}"]]), "photo");
+    },
     (e: ExecError) => e.code === "ERUNTIME" && /no extension/.test(e.message),
   );
 });
 
-test("renderPipeline with empty ops returns the image as-is", () => {
-  const out = renderPipeline(vips, red, []);
+test("renderPipeline with empty ops returns the image as-is", async () => {
+  const out = await renderPipeline(vips, red, []);
   assert.equal(`${out.width}x${out.height}`, "100x60");
   assert.equal(out.ext, "png", "defaults to png");
 });
 
-test("unknown op throws EUNKNOWN", () => {
-  assert.throws(
-    () => renderPipeline(vips, red, [{ op: "vignette" } as { op: string; [key: string]: unknown }]),
+test("unknown op throws EUNKNOWN", async () => {
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, red, [{ op: "vignette" } as { op: string; [key: string]: unknown }]);
+    },
     (e: ExecError) => e.code === "EUNKNOWN",
   );
 });
 
-test("very small image (1x1) survives resize and crop", () => {
-  const tiny = renderPipeline(vips, red, ops(["resize", ["1x1", "upscale"]]));
+test("very small image (1x1) survives resize and crop", async () => {
+  const tiny = await renderPipeline(vips, red, ops(["resize", ["1x1", "upscale"]]));
   assert.equal(`${tiny.width}x${tiny.height}`, "1x1");
 });
 
-test("very large resize target with upscale", () => {
+test("very large resize target with upscale", async () => {
   // 100x60 image resized to 200x200 with fit=inside: scales by min(2, 3.33)=2 → 200x120
-  const out = renderPipeline(vips, red, ops(["resize", ["200x200", "upscale"]]));
+  const out = await renderPipeline(vips, red, ops(["resize", ["200x200", "upscale"]]));
   assert.equal(`${out.width}x${out.height}`, "200x120");
 });
 
 test("chained transforms: resize + rotate + flip + grayscale + blur + sharpen + pad", async () => {
-  const out = renderPipeline(
+  const out = await renderPipeline(
     vips,
     red,
     ops(
@@ -356,28 +419,94 @@ test("chained transforms: resize + rotate + flip + grayscale + blur + sharpen + 
   assert.equal(`${out.width}x${out.height}`, "40x60");
 });
 
-test("grayscale on already grayscale image is a no-op", () => {
-  const grey = renderPipeline(vips, red, ops(["grayscale", []]));
-  const grey2 = renderPipeline(vips, Buffer.from(grey.bytes), ops(["grayscale", []]));
+test("grayscale on already grayscale image is a no-op", async () => {
+  const grey = await renderPipeline(vips, red, ops(["grayscale", []]));
+  const grey2 = await renderPipeline(vips, Buffer.from(grey.bytes), ops(["grayscale", []]));
   assert.equal(`${grey2.width}x${grey2.height}`, `${grey.width}x${grey.height}`);
 });
 
-test("flip then mirror is equivalent to rotate 180", () => {
-  const fm = renderPipeline(vips, red, ops(["flip", []], ["mirror", []]));
-  const r180 = renderPipeline(vips, red, ops(["rotate", ["180"]]));
+test("flip then mirror is equivalent to rotate 180", async () => {
+  const fm = await renderPipeline(vips, red, ops(["flip", []], ["mirror", []]));
+  const r180 = await renderPipeline(vips, red, ops(["rotate", ["180"]]));
   assert.equal(`${fm.width}x${fm.height}`, `${r180.width}x${r180.height}`);
   // Both should be 100x60
   assert.equal(`${fm.width}x${fm.height}`, "100x60");
 });
 
-test("rotate 90 then rotate 270 returns to original dimensions", () => {
-  const out = renderPipeline(vips, red, ops(["rotate", ["90"]], ["rotate", ["270"]]));
+test("rotate 90 then rotate 270 returns to original dimensions", async () => {
+  const out = await renderPipeline(vips, red, ops(["rotate", ["90"]], ["rotate", ["270"]]));
   assert.equal(`${out.width}x${out.height}`, "100x60");
 });
 
 test("write to tiff with quality", async () => {
-  const out = renderPipeline(vips, red, ops(["write", ["o.tiff", "quality=50"]]));
+  const out = await renderPipeline(vips, red, ops(["write", ["o.tiff", "quality=50"]]));
   assert.equal(out.ext, "tif");
   const m = await sharp(Buffer.from(out.bytes)).metadata();
   assert.equal(m.format, "tiff");
+});
+
+// ---------------------------------------------------------------------------
+// Animated GIF tests
+// ---------------------------------------------------------------------------
+
+async function makeAnimatedGif(frames: number, width: number, height: number, delay: number[]): Promise<Buffer> {
+  const bufs: Buffer[] = [];
+  const colors = ["red", "green", "blue", "yellow", "cyan", "magenta"];
+  for (let i = 0; i < frames; i++) {
+    bufs.push(
+      await sharp({ create: { width, height, channels: 3, background: colors[i % colors.length]! } })
+        .png()
+        .toBuffer(),
+    );
+  }
+  return sharp(bufs, { join: { animated: true } })
+    .gif({ delay, loop: 0 })
+    .toBuffer();
+}
+
+test("animated gif: resize shrinks all frames", async () => {
+  const out = await renderPipeline(vips, animGif, ops(["resize", ["10"]]), "anim.gif");
+  assert.equal(out.width, 10, "frame width shrunk to 10");
+  assert.equal(out.ext, "gif");
+  const m = await sharp(Buffer.from(out.bytes)).metadata();
+  assert.ok(m.pages! > 1, "multiple pages preserved");
+});
+
+test("animated gif: crop all frames", async () => {
+  const out = await renderPipeline(vips, animGif, ops(["crop", ["10x10", "gravity=center"]]), "anim.gif");
+  assert.equal(out.width, 10, "frame width cropped to 10");
+  assert.equal(out.ext, "gif");
+  const m = await sharp(Buffer.from(out.bytes)).metadata();
+  assert.ok(m.pages! > 1, "multiple pages preserved");
+});
+
+test("animated gif: grayscale all frames", async () => {
+  const out = await renderPipeline(vips, animGif, ops(["grayscale", []]), "anim.gif");
+  assert.equal(out.ext, "gif");
+  const m = await sharp(Buffer.from(out.bytes)).metadata();
+  assert.ok(m.pages! > 1, "multiple pages preserved");
+});
+
+test("animated gif: write to tiff preserves animation", async () => {
+  const out = await renderPipeline(vips, animGif, ops(["write", ["out.tiff"]]), "anim.gif");
+  assert.equal(out.ext, "tif");
+  const m = await sharp(Buffer.from(out.bytes)).metadata();
+  assert.ok(m.pages! > 1, "multiple pages preserved in tiff");
+});
+
+test("animated gif: write to non-animated format fails", async () => {
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, animGif, ops(["write", ["out.png"]]), "anim.gif");
+    },
+    (e: ExecError) => e.code === "ERUNTIME",
+  );
+});
+
+test("animated gif: pad works on all frames", async () => {
+  const out = await renderPipeline(vips, animGif, ops(["pad", ["5", "color=black"]]), "anim.gif");
+  assert.equal(out.width, 30, "padded frame width is 30");
+  assert.equal(out.ext, "gif");
+  const m = await sharp(Buffer.from(out.bytes)).metadata();
+  assert.ok(m.pages! > 1, "multiple pages preserved");
 });

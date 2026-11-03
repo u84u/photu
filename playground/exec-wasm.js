@@ -47,6 +47,22 @@ function gravityOffsets(g, W, H, w, h) {
   return { left, top };
 }
 
+function tryGetInt(im, name) {
+  try {
+    return im.getInt(name);
+  } catch {
+    return 0;
+  }
+}
+
+function tryGetArrayDouble(im, name) {
+  try {
+    return im.getArrayDouble(name);
+  } catch {
+    return null;
+  }
+}
+
 const FORMAT_EXT = {
   jpeg: ".jpg",
   png: ".png",
@@ -55,6 +71,8 @@ const FORMAT_EXT = {
   tiff: ".tif",
   avif: ".avif",
 };
+
+const ANIMATED_OUTPUT_FORMATS = new Set([".gif", ".tif"]);
 
 function applyResize(im, op) {
   const W = im.width;
@@ -148,12 +166,76 @@ function sourceExt(name) {
   return ext === ".jpeg" ? ".jpg" : ext === ".tiff" ? ".tif" : ext;
 }
 
+/** Load an overlay image. Local paths can't be read in the browser, so
+ * overlay in the playground requires an http(s) URL. Returns the overlay
+ * as a wasm-vips Image. */
+async function loadOverlay(vips, path) {
+  if (!path.startsWith("http://") && !path.startsWith("https://")) {
+    fail("EUNSUPPORTED", `overlay with local path '${path}' is not supported in the playground - use a URL or the CLI`);
+  }
+  const res = await fetch(path);
+  if (!res.ok) fail("EFETCH", `could not fetch overlay ${path}: HTTP ${res.status}`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  let overlay = vips.Image.newFromBuffer(bytes);
+  try {
+    overlay = overlay.autorot();
+  } catch {}
+  return overlay;
+}
+
+/** Apply an overlay (watermark) image onto `im` with gravity and opacity. */
+async function applyOverlay(vips, im, op) {
+  let overlay = await loadOverlay(vips, op.path);
+  const opacity = op.opacity;
+
+  let result = im;
+  if (opacity < 1) {
+    if (overlay.bands < 4) {
+      const alpha = overlay.extractBand(0, { n: 1 }).multiply(0).add(255);
+      overlay = overlay.bandjoin(alpha);
+    }
+    const alpha = overlay.extractBand(3, { n: 1 }).multiply(opacity);
+    overlay = overlay.extractBand(0, { n: 3 }).bandjoin(alpha);
+  }
+
+  const W = im.width;
+  const H = im.height;
+  const ow = overlay.width;
+  const oh = overlay.height;
+  const { left, top } = gravityOffsets(op.gravity, W, H, ow, oh);
+  result = im.composite(overlay, 2, { x: left, y: top }); // 2 = BlendMode.over
+  return result;
+}
+
+/** Split a multi-page image into per-frame images. Each page is loaded
+ * separately from the input buffer, since libvips does not stack pages
+ * vertically in the image data. */
+function splitFrames(vips, inputBytes) {
+  const im = vips.Image.newFromBuffer(inputBytes);
+  const pages = tryGetInt(im, "n-pages") || 1;
+  if (pages <= 1) return [im];
+  const frames = [];
+  for (let p = 0; p < pages; p++) {
+    frames.push(vips.Image.newFromBuffer(inputBytes, `page=${p}`));
+  }
+  return frames;
+}
+
+/** Rejoin processed frames into a multi-page animated image. */
+function joinFrames(vips, frames, pageHeight, delays, loop) {
+  const joined = vips.Image.arrayjoin(frames, { across: 1 });
+  joined.setInt("page-height", pageHeight);
+  if (delays && delays.length > 0) joined.setArrayDouble("delay", delays);
+  if (loop !== undefined) joined.setInt("loop", loop);
+  return joined;
+}
+
 /**
  * Execute normalized ops against one image.
  * Returns { bytes, ext, width, height } of the encoded result.
  * `fileName` stands in for the CLI's source path ({ext} resolution).
  */
-export function renderPipeline(vips, inputBytes, ops, fileName = "image.png") {
+export async function renderPipeline(vips, inputBytes, ops, fileName = "image.png") {
   let im = vips.Image.newFromBuffer(inputBytes);
   try {
     im = im.autorot();
@@ -161,104 +243,140 @@ export function renderPipeline(vips, inputBytes, ops, fileName = "image.png") {
     // loaders without orientation support: nothing to do
   }
 
-  let write = null;
-  for (const op of ops) {
-    switch (op.op) {
-      case "resize":
-        im = applyResize(im, op);
-        break;
-      case "crop":
-        im = applyCrop(im, op);
-        break;
-      case "rotate":
-        im = applyRotate(im, op);
-        break;
-      case "flip":
-        im = im.flipVer();
-        break;
-      case "mirror":
-        im = im.flipHor();
-        break;
-      case "grayscale":
-        im = im.colourspace("b-w");
-        break;
-      case "adjust":
-        im = applyAdjust(im, op);
-        break;
-      case "blur":
-        im = im.gaussblur(op.sigma === null ? 0.75 : op.sigma);
-        break;
-      case "sharpen":
-        im = op.sigma === null ? im.sharpen() : im.sharpen({ sigma: op.sigma });
-        break;
+  const pages = tryGetInt(im, "n-pages") || 1;
+  const animated = pages > 1;
+  const pageHeight = animated ? (tryGetInt(im, "page-height") || im.height) : im.height;
+  const delays = animated ? tryGetArrayDouble(im, "delay") : null;
+  const loop = animated ? tryGetInt(im, "loop") : undefined;
+
+  const frames = animated ? splitFrames(vips, inputBytes) : [im];
+
+  const writeOp = ops.find((op) => op.op === "write");
+  const transformOps = ops.filter((op) => op.op !== "write");
+
+  const processedFrames = await Promise.all(
+    frames.map(async (frame) => {
+      let out = frame;
+      for (const op of transformOps) {
+        switch (op.op) {
+          case "resize":
+            out = applyResize(out, op);
+            break;
+          case "crop":
+            out = applyCrop(out, op);
+            break;
+          case "rotate":
+            out = applyRotate(out, op);
+            break;
+          case "flip":
+            out = out.flipVer();
+            break;
+          case "mirror":
+            out = out.flipHor();
+            break;
+          case "grayscale":
+            out = out.colourspace("b-w");
+            break;
+          case "adjust":
+            out = applyAdjust(out, op);
+            break;
+          case "blur":
+            out = out.gaussblur(op.sigma === null ? 0.75 : op.sigma);
+            break;
+          case "sharpen":
+            out = op.sigma === null ? out.sharpen() : out.sharpen({ sigma: op.sigma });
+            break;
       case "pad": {
         const bg = parseColor(op.color);
-        im = im.embed(op.size, op.size, im.width + 2 * op.size, im.height + 2 * op.size, {
+        const bgWithAlpha = out.hasAlpha() ? [...bg, 255] : bg;
+        out = out.embed(op.size, op.size, out.width + 2 * op.size, out.height + 2 * op.size, {
           extend: "background",
-          background: bg,
+          background: bgWithAlpha,
         });
         break;
       }
-      case "trim":
-        fail("EUNSUPPORTED", "trim is not available in the playground yet - try the CLI");
-        break;
-      case "normalize":
-        im = im.normalize();
-        break;
-      case "negate":
-        im = im.negate();
-        break;
-      case "sepia": {
-        const strength = op.strength;
-        if (strength !== 0) {
-          im = im.colourspace("lch").linear([1, 1 + strength * 0.5, 1], [0, strength * 20, 0]).colourspace("srgb");
+          case "trim":
+            fail("EUNSUPPORTED", "trim is not available in the playground yet - try the CLI");
+          case "normalize":
+            out = out.normalize();
+            break;
+          case "negate":
+            out = out.negate();
+            break;
+          case "sepia": {
+            const strength = op.strength;
+            if (strength !== 0) {
+              out = out.colourspace("lch").linear([1, 1 + strength * 0.5, 1], [0, strength * 20, 0]).colourspace("srgb");
+            }
+            break;
+          }
+          case "level": {
+            const black = op.black;
+            const white = op.white;
+            const gamma = op.gamma;
+            const scale = 255 / (white - black);
+            const offset = -black * scale;
+            out = out.linear([scale, scale, scale], [offset, offset, offset]).gamma(1 / gamma);
+            break;
+          }
+          case "median": {
+            const size = op.size;
+            out = size === null ? out.median() : out.median(size);
+            break;
+          }
+          case "overlay":
+            out = await applyOverlay(vips, out, op);
+            break;
+          case "write":
+            break;
+          default:
+            fail("EUNKNOWN", `op '${op.op}' is not supported in the playground`);
         }
-        break;
       }
-      case "level": {
-        const black = op.black;
-        const white = op.white;
-        const gamma = op.gamma;
-        const scale = 255 / (white - black);
-        const offset = -black * scale;
-        im = im.linear([scale, scale, scale], [offset, offset, offset]).gamma(1 / gamma);
-        break;
-      }
-      case "median": {
-        const size = op.size;
-        im = size === null ? im.median() : im.median(size);
-        break;
-      }
-      case "overlay":
-        fail("EUNSUPPORTED", "overlay is not available in the playground yet - try the CLI");
-        break;
-      case "write":
-        write = op;
-        break;
-      default:
-        fail("EUNKNOWN", `op '${op.op}' is not supported in the playground`);
-    }
+      return out;
+    }),
+  );
+
+  let format;
+  if (writeOp == null) {
+    format = animated ? ".gif" : ".png";
+  } else if (writeOp.format === "source") {
+    format = sourceExt(fileName);
+  } else {
+    const f = FORMAT_EXT[writeOp.format];
+    if (!f) fail("ERUNTIME", `unknown output format '${writeOp.format}'`);
+    format = f;
   }
 
-  const format = write === null || write.format === "source"
-    ? (write === null ? ".png" : sourceExt(fileName))
-    : FORMAT_EXT[write.format];
+  let final;
+  if (processedFrames.length === 1) {
+    final = processedFrames[0];
+  } else {
+    const outFmt = writeOp != null ? FORMAT_EXT[writeOp.format] : format;
+    if (!ANIMATED_OUTPUT_FORMATS.has(outFmt)) {
+      fail("ERUNTIME", `animated output requires gif or tiff format`);
+    }
+    final = joinFrames(vips, processedFrames, pageHeight, delays, loop);
+  }
 
   const opts = {};
-  if (write !== null) {
+  if (writeOp != null) {
     if (format === ".jpg") {
-      im = im.flatten({ background: parseColor(write.background) });
+      final = final.flatten({ background: parseColor(writeOp.background) });
     }
-    if (write.quality !== null && format !== ".png" && format !== ".gif") {
-      opts.Q = write.quality;
+    if (writeOp.quality !== null && format !== ".png" && format !== ".gif") {
+      opts.Q = writeOp.quality;
     }
-    if (write.lossless && (format === ".webp" || format === ".avif")) {
+    if (writeOp.lossless && (format === ".webp" || format === ".avif")) {
       opts.lossless = true;
+    }
+    if (animated && format === ".gif") {
+      // GIF save with animation metadata already on the image
     }
   }
 
-  const width = im.width;
-  const height = im.height;
-  const bytes = im.writeToBuffer(format, opts);
+  const width = final.width;
+  const height = final.height;
+  const bytes = final.writeToBuffer(format, opts);
   return { bytes, ext: format.slice(1), width, height };
 }

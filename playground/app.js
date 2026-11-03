@@ -145,7 +145,7 @@ function outputName(ops) {
   return rendered.slice(rendered.lastIndexOf("/") + 1);
 }
 
-function run() {
+async function run() {
   if (!vips || !inputBytes) return;
   let ops;
   try {
@@ -162,7 +162,7 @@ function run() {
   renderPlanBox(ops);
   try {
     const t0 = performance.now();
-    const result = renderPipeline(vips, inputBytes, ops, inputName);
+    const result = await renderPipeline(vips, inputBytes, ops, inputName);
     const ms = Math.round(performance.now() - t0);
     const blob = new Blob([result.bytes], { type: `image/${result.ext === "jpg" ? "jpeg" : result.ext}` });
     if (afterURL) URL.revokeObjectURL(afterURL);
