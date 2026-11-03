@@ -73,3 +73,47 @@ test("insertText for a key completion has no trailing space, so a value can foll
     { label: "fit=", insertText: "fit=" },
   );
 });
+
+test("write command suggests quality= and lossless", () => {
+  const items = labels("write out.webp ");
+  assert.ok(items.includes("quality="));
+  assert.ok(items.includes("lossless"));
+});
+
+test("write command does not suggest fit= or upscale", () => {
+  const items = labels("write out.webp ");
+  assert.ok(!items.includes("fit="));
+  assert.ok(!items.includes("upscale"));
+});
+
+test("cursor in the middle of a token suggests for that token", () => {
+  const text = "resize 800 fit=cov | write out.webp";
+  const cursor = text.indexOf("fit=cov") + "fit=co".length;
+  const result = getSuggestions(text, cursor);
+  assert.ok(result.items.length > 0);
+  assert.ok(result.items.every((i) => i.label.startsWith("fit=co")));
+});
+
+test("empty text returns all commands", () => {
+  const items = labels("");
+  assert.equal(items.length, COMMANDS.length, "returns all registered commands");
+});
+
+test("pipe with trailing space suggests commands", () => {
+  const items = labels("resize 800 | ");
+  assert.ok(items.includes("write"));
+  assert.ok(items.includes("sharpen"));
+});
+
+test("adjust suggests brightness=, saturation=, hue= options", () => {
+  const items = labels("adjust ");
+  assert.ok(items.includes("brightness="));
+  assert.ok(items.includes("saturation="));
+  assert.ok(items.includes("hue="));
+});
+
+test("pad suggests color= option", () => {
+  const items = labels("pad 20 ");
+  assert.ok(items.includes("color="));
+  assert.ok(!items.includes("gravity="), "pad does not have gravity");
+});

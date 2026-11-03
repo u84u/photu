@@ -104,8 +104,8 @@ export function parseDimension(spec: string, opts?: { region?: boolean }): Dimen
     if (offsets.length !== 2) {
       throw new Panic("EBADARG", `invalid region '${spec}' - ${DIM_HINT}`);
     }
-    left = offsetInt(offsets[0], "left offset", spec);
-    top = offsetInt(offsets[1], "top offset", spec);
+    left = offsetInt(offsets[0]!, "left offset", spec);
+    top = offsetInt(offsets[1]!, "top offset", spec);
   }
 
   let width: number | null = null;

@@ -68,24 +68,24 @@ export function parsePlan(text: string): Plan {
     throw new Panic("ENOTPLAN", NOT_A_PLAN);
   }
   const obj = value as Record<string, unknown>;
-  if (!("photu" in obj) || !Number.isInteger(obj.photu)) {
+  if (!("photu" in obj) || !Number.isInteger(obj["photu"])) {
     throw new Panic("ENOTPLAN", NOT_A_PLAN);
   }
-  if (obj.photu !== PROTOCOL) {
+  if (obj["photu"] !== PROTOCOL) {
     throw new Panic(
       "EVERSION",
-      `plan is protocol v${obj.photu} but this photu speaks v${PROTOCOL} - ` +
+      `plan is protocol v${obj["photu"]} but this photu speaks v${PROTOCOL} - ` +
         "is another photu version in this pipeline?",
     );
   }
 
   if ("error" in obj) {
-    const err = obj.error as Record<string, unknown> | null;
+    const err = obj["error"] as Record<string, unknown> | null;
     if (
       typeof err !== "object" || err === null ||
-      typeof err.stage !== "string" ||
-      typeof err.code !== "string" ||
-      typeof err.message !== "string"
+      typeof err["stage"] !== "string" ||
+      typeof err["code"] !== "string" ||
+      typeof err["message"] !== "string"
     ) {
       throw new Panic("EMALFORMED", "plan has a malformed error object");
     }
@@ -101,7 +101,7 @@ export function parsePlan(text: string): Plan {
     ops.some(
       (o) =>
         typeof o !== "object" || o === null || Array.isArray(o) ||
-        typeof (o as Record<string, unknown>).op !== "string",
+        typeof (o as Record<string, unknown>)["op"] !== "string",
     )
   ) {
     throw new Panic("EMALFORMED", 'plan.ops must be an array of objects each with an "op" string');

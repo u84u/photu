@@ -37,6 +37,12 @@ test("a URL token is always one positional, even with '=' in the query string", 
   assert.equal(args.options.get("gravity"), "center");
 });
 
+test("bare boolean flags appear as positionals", () => {
+  const args = parseArgs(["upscale", "lossless"]);
+  assert.deepEqual(args.positionals, ["upscale", "lossless"]);
+  assert.equal(args.options.size, 0);
+});
+
 test("parseArgs rejects bad options", () => {
   assert.throws(() => parseArgs(["fit=cover", "fit=fill"]), panicWith("EBADARG"));
   assert.throws(() => parseArgs(["quality="]), panicWith("EBADARG"));
@@ -67,6 +73,15 @@ test("parseDimension rejects malformed specs", () => {
   for (const spec of bad) {
     assert.throws(() => parseDimension(spec, { region: true }), panicWith("EBADARG"), spec);
   }
+});
+
+test("parseDimension with region=true but no offsets is fine (height-only)", () => {
+  assert.deepEqual(parseDimension("x600", { region: true }), {
+    width: null,
+    height: 600,
+    left: null,
+    top: null,
+  });
 });
 
 test("parseDimension rejects misplaced or malformed offsets", () => {

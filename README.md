@@ -140,17 +140,24 @@ already covers your workflow, use it - it's excellent.
 | `blur`, `sharpen` | `blur 2.5`, `sharpen` | sigma is optional |
 | `overlay` | `overlay logo.png gravity=southeast opacity=0.5` | for watermarks |
 | `pad` | `pad 20 color=white` | |
+| `trim` | `trim threshold=10` | crops border pixels matching the background (corner colour) |
+| `normalize` | | stretches contrast to full range |
+| `negate` | | inverts all channels |
+| `sepia` | `sepia strength=0.8` | warm vintage tone, strength 0–1 |
+| `level` | `level black=16 white=240 gamma=2.2` | black/white point + gamma |
+| `median` | `median 5` | median noise reduction, odd size 3–15 |
 | `write` | `write "out/{name}.webp" quality=80` | runs the pipeline |
 
 Output templates understand `{name}` (source filename without extension),
 `{ext}` (source extension, so `write "out/{name}.{ext}"` keeps each file's
 format) and `{i}` (1-based index).
 
-There are also three utilities that aren't pipeline stages:
+There are also four utilities that aren't pipeline stages:
 
 - `photu info "<glob>"` prints format, dimensions and size for each file
 - `photu formats` lists what your installed libvips can read and write
 - `photu explain` pretty-prints whatever plan arrives on stdin
+- `photu version` prints the installed version
 
 ## Formats
 
@@ -180,4 +187,4 @@ stderr.
 
 ## License
 
-MIT
+CC0 1.0 Universal (public domain dedication).

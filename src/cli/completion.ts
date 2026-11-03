@@ -17,7 +17,7 @@ function words(list: readonly string[]): string {
 }
 
 function commandCase(cmd: string): string {
-  const meta = COMMAND_META[cmd];
+  const meta = COMMAND_META[cmd]!;
   const keyWords = Object.keys(meta.options).map((k) => `${k}=`);
   const wordList = words([...keyWords, ...meta.flags]);
   const fileFlag = FILE_ARG_COMMANDS.has(cmd) ? " -f" : "";
@@ -34,7 +34,7 @@ export function generateBashCompletion(): string {
   const commandCases = COMMANDS.map(commandCase).join("\n");
 
   const enumCases = COMMANDS.flatMap((cmd) =>
-    Object.entries(COMMAND_META[cmd].options)
+    Object.entries(COMMAND_META[cmd]!.options)
       .filter(([, values]) => values !== null)
       .map(([key, values]) => enumCase(cmd, key, values as readonly string[])),
   ).join("\n");

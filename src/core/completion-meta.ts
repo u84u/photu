@@ -29,4 +29,11 @@ export const COMMAND_META: Record<string, CommandMeta> = {
   overlay: { flags: [], options: { gravity: GRAVITIES, opacity: null } },
   pad: { flags: [], options: { color: null } },
   write: { flags: ["lossless"], options: { quality: null } },
+
+  trim: { flags: [], options: { threshold: null } },
+  normalize: { flags: [], options: {} },
+  negate: { flags: [], options: {} },
+  sepia: { flags: [], options: { strength: null } },
+  level: { flags: [], options: { black: null, white: null, gamma: null } },
+  median: { flags: [], options: {} },
 };

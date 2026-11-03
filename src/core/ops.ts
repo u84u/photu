@@ -216,6 +216,44 @@ const SPECS: Record<string, Spec> = {
     return s.finish({ op: "pad", size, color });
   },
 
+  trim(s) {
+    const threshold = s.num("threshold", 10, 0, 255);
+    return s.finish({ op: "trim", threshold });
+  },
+
+  normalize(s) {
+    return s.finish({ op: "normalize" });
+  },
+
+  negate(s) {
+    return s.finish({ op: "negate" });
+  },
+
+  sepia(s) {
+    const strength = s.num("strength", 0.8, 0, 1);
+    return s.finish({ op: "sepia", strength });
+  },
+
+  level(s) {
+    const black = s.num("black", 0, 0, 255);
+    const white = s.num("white", 255, 0, 255);
+    const gamma = s.num("gamma", 1, 0.1, 10);
+    if (black >= white) s.fail(`level: black (${black}) must be below white (${white})`);
+    return s.finish({ op: "level", black, white, gamma });
+  },
+
+  median(s) {
+    const raw = s.maybePositional();
+    let size: number | null = null;
+    if (raw !== null) {
+      size = Number(raw);
+      if (!Number.isInteger(size) || size < 3 || size > 15 || size % 2 === 0) {
+        s.fail(`median size must be an odd integer between 3 and 15, got '${raw}'`);
+      }
+    }
+    return s.finish({ op: "median", size });
+  },
+
   write(s) {
     const lossless = s.flag("lossless");
     const template = s.positional("output template (e.g. out/{name}.webp)");

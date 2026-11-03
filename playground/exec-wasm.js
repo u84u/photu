@@ -199,6 +199,36 @@ export function renderPipeline(vips, inputBytes, ops, fileName = "image.png") {
         });
         break;
       }
+      case "trim":
+        fail("EUNSUPPORTED", "trim is not available in the playground yet - try the CLI");
+        break;
+      case "normalize":
+        im = im.normalize();
+        break;
+      case "negate":
+        im = im.negate();
+        break;
+      case "sepia": {
+        const strength = op.strength;
+        if (strength !== 0) {
+          im = im.colourspace("lch").linear([1, 1 + strength * 0.5, 1], [0, strength * 20, 0]).colourspace("srgb");
+        }
+        break;
+      }
+      case "level": {
+        const black = op.black;
+        const white = op.white;
+        const gamma = op.gamma;
+        const scale = 255 / (white - black);
+        const offset = -black * scale;
+        im = im.linear([scale, scale, scale], [offset, offset, offset]).gamma(1 / gamma);
+        break;
+      }
+      case "median": {
+        const size = op.size;
+        im = size === null ? im.median() : im.median(size);
+        break;
+      }
       case "overlay":
         fail("EUNSUPPORTED", "overlay is not available in the playground yet - try the CLI");
         break;

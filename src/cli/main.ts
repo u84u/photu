@@ -10,7 +10,11 @@
 // pass it through verbatim and exit nonzero without re-printing.
 
 import { glob } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+const VERSION = pkg.version;
 import {
   Panic,
   type Plan,
@@ -74,7 +78,7 @@ function globPattern(command: string, tokens: string[]): string {
   if (args.positionals.length !== 1 || args.options.size > 0) {
     throw new Panic("EBADARG", `${command}: usage: photu ${command} "<glob>"`);
   }
-  return args.positionals[0].replaceAll("\\", "/");
+  return args.positionals[0]!.replaceAll("\\", "/");
 }
 
 async function expandGlob(pattern: string): Promise<string[]> {
@@ -119,13 +123,13 @@ async function doRead(tokens: string[]): Promise<void> {
   const perSpec: string[][] = new Array(specs.length);
   try {
     for (let i = 0; i < specs.length; i++) {
-      if (isUrl(specs[i])) {
-        perSpec[i] = [specs[i]];
+      if (isUrl(specs[i]!)) {
+        perSpec[i] = [specs[i]!];
         continue;
       }
-      const matches = await expandGlob(specs[i].replaceAll("\\", "/"));
+      const matches = await expandGlob(specs[i]!.replaceAll("\\", "/"));
       if (matches.length === 0) {
-        throw new Panic("EEMPTY", `read: '${specs[i]}' matched no files`);
+        throw new Panic("EEMPTY", `read: '${specs[i]!}' matched no files`);
       }
       perSpec[i] = matches;
     }
@@ -195,7 +199,7 @@ async function doWrite(tokens: string[]): Promise<void> {
 
 async function doExplain(tokens: string[]): Promise<void> {
   if (tokens.length > 0) {
-    stderr(`explain takes no arguments, got '${tokens[0]}'`);
+    stderr(`explain takes no arguments, got '${tokens[0]!}'`);
     process.exitCode = 1;
     return;
   }
@@ -239,6 +243,10 @@ async function main(): Promise<void> {
   if (!command || command === "help") {
     process.stderr.write(USAGE + "\n");
     process.exitCode = command ? 0 : 1;
+    return;
+  }
+  if (command === "version" || command === "--version" || command === "-v") {
+    process.stdout.write(`photu ${VERSION}\n`);
     return;
   }
   if (command === "read") return doRead(tokens);

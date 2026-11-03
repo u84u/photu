@@ -1,6 +1,6 @@
 {
   "name": "photu",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "photu (ફોટુ) — a shell-pipe language for image manipulation, built on libvips",
   "type": "module",
   "bin": {
@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test",
+    "test": "node --test --test-concurrency=5",
+    "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm test && npm run build"
   },
   "files": [
@@ -30,11 +31,13 @@
     "avif",
     "imagemagick-alternative"
   ],
-  "license": "MIT",
+  "license": "CC0-1.0",
   "dependencies": {
     "sharp": "^0.35.3"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^6.0.3",
     "wasm-vips": "^0.0.18"
   }
 }
