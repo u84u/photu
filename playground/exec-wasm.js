@@ -221,15 +221,6 @@ function splitFrames(vips, inputBytes) {
   return frames;
 }
 
-/** Rejoin processed frames into a multi-page animated image. */
-function joinFrames(vips, frames, pageHeight, delays, loop) {
-  const joined = vips.Image.arrayjoin(frames, { across: 1 });
-  joined.setInt("page-height", pageHeight);
-  if (delays && delays.length > 0) joined.setArrayDouble("delay", delays);
-  if (loop !== undefined) joined.setInt("loop", loop);
-  return joined;
-}
-
 /**
  * Execute normalized ops against one image.
  * Returns { bytes, ext, width, height } of the encoded result.
@@ -356,35 +347,27 @@ export async function renderPipeline(vips, inputBytes, ops, fileName = "image.pn
     if (!ANIMATED_OUTPUT_FORMATS.has(outFmt)) {
       fail("ERUNTIME", `animated output requires gif or tiff format`);
     }
-    final = joinFrames(vips, processedFrames, pageHeight, delays, loop);
+    // wasm-vips in the browser does not support multi-frame GIF/TIFF
+    // output (gifsaveBuffer hangs on animated input). Use the CLI instead.
+    fail("EUNSUPPORTED", `animated output (${pages} frames) is not supported in the playground - use the CLI`);
   }
-
-  const frameWidth = processedFrames[0].width;
-  const frameHeight = pageHeight;
 
   let bytes;
-  if (animated && format === ".gif") {
-    // wasm-vips' gifsaveBuffer doesn't accept a `delay` option, so store
-    // per-frame delays as image metadata before saving.
-    final.setArrayDouble("delay", delays ?? []);
-    bytes = final.gifsaveBuffer({ page_height: frameHeight });
-  } else {
-    const opts = {};
-    if (writeOp != null) {
-      if (format === ".jpg") {
-        final = final.flatten({ background: parseColor(writeOp.background) });
-      }
-      if (writeOp.quality !== null && format !== ".png" && format !== ".gif") {
-        opts.Q = writeOp.quality;
-      }
-      if (writeOp.lossless && (format === ".webp" || format === ".avif")) {
-        opts.lossless = true;
-      }
+  const opts = {};
+  if (writeOp != null) {
+    if (format === ".jpg") {
+      final = final.flatten({ background: parseColor(writeOp.background) });
     }
-    bytes = final.writeToBuffer(format, opts);
+    if (writeOp.quality !== null && format !== ".png" && format !== ".gif") {
+      opts.Q = writeOp.quality;
+    }
+    if (writeOp.lossless && (format === ".webp" || format === ".avif")) {
+      opts.lossless = true;
+    }
   }
+  bytes = final.writeToBuffer(format, opts);
 
-  const width = animated ? frameWidth : final.width;
-  const height = animated ? frameHeight : final.height;
+  const width = final.width;
+  const height = final.height;
   return { bytes, ext: format.slice(1), width, height };
 }

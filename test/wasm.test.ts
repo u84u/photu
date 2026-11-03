@@ -465,33 +465,39 @@ async function makeAnimatedGif(frames: number, width: number, height: number, de
 }
 
 test("animated gif: resize shrinks all frames", async () => {
-  const out = await renderPipeline(vips, animGif, ops(["resize", ["10"]]), "anim.gif");
-  assert.equal(out.width, 10, "frame width shrunk to 10");
-  assert.equal(out.ext, "gif");
-  const m = await sharp(Buffer.from(out.bytes)).metadata();
-  assert.ok(m.pages! > 1, "multiple pages preserved");
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, animGif, ops(["resize", ["10"]]), "anim.gif");
+    },
+    (e: ExecError) => e.code === "EUNSUPPORTED",
+  );
 });
 
 test("animated gif: crop all frames", async () => {
-  const out = await renderPipeline(vips, animGif, ops(["crop", ["10x10", "gravity=center"]]), "anim.gif");
-  assert.equal(out.width, 10, "frame width cropped to 10");
-  assert.equal(out.ext, "gif");
-  const m = await sharp(Buffer.from(out.bytes)).metadata();
-  assert.ok(m.pages! > 1, "multiple pages preserved");
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, animGif, ops(["crop", ["10x10", "gravity=center"]]), "anim.gif");
+    },
+    (e: ExecError) => e.code === "EUNSUPPORTED",
+  );
 });
 
 test("animated gif: grayscale all frames", async () => {
-  const out = await renderPipeline(vips, animGif, ops(["grayscale", []]), "anim.gif");
-  assert.equal(out.ext, "gif");
-  const m = await sharp(Buffer.from(out.bytes)).metadata();
-  assert.ok(m.pages! > 1, "multiple pages preserved");
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, animGif, ops(["grayscale", []]), "anim.gif");
+    },
+    (e: ExecError) => e.code === "EUNSUPPORTED",
+  );
 });
 
 test("animated gif: write to tiff preserves animation", async () => {
-  const out = await renderPipeline(vips, animGif, ops(["write", ["out.tiff"]]), "anim.gif");
-  assert.equal(out.ext, "tif");
-  const m = await sharp(Buffer.from(out.bytes)).metadata();
-  assert.ok(m.pages! > 1, "multiple pages preserved in tiff");
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, animGif, ops(["write", ["out.tiff"]]), "anim.gif");
+    },
+    (e: ExecError) => e.code === "EUNSUPPORTED",
+  );
 });
 
 test("animated gif: write to non-animated format fails", async () => {
@@ -504,9 +510,10 @@ test("animated gif: write to non-animated format fails", async () => {
 });
 
 test("animated gif: pad works on all frames", async () => {
-  const out = await renderPipeline(vips, animGif, ops(["pad", ["5", "color=black"]]), "anim.gif");
-  assert.equal(out.width, 30, "padded frame width is 30");
-  assert.equal(out.ext, "gif");
-  const m = await sharp(Buffer.from(out.bytes)).metadata();
-  assert.ok(m.pages! > 1, "multiple pages preserved");
+  assert.rejects(
+    async () => {
+      await renderPipeline(vips, animGif, ops(["pad", ["5", "color=black"]]), "anim.gif");
+    },
+    (e: ExecError) => e.code === "EUNSUPPORTED",
+  );
 });
