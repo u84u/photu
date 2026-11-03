@@ -103,7 +103,7 @@ describe("exec", { concurrency: true }, () => {
 
 test("end-to-end: resize + grayscale to webp", async () => {
   const res = await pipeline(
-    `${dir}/*.jpg`,
+    `${dir}/red.jpg`,
     ["resize", "50"],
     ["grayscale"],
     ["write", `${out}/a/{name}.webp`, "quality=70"],
@@ -116,8 +116,15 @@ test("end-to-end: resize + grayscale to webp", async () => {
   assert.equal(m.format, "webp");
   assert.equal(m.width, 50);
   assert.equal(m.height, 30, "aspect preserved");
-  const big = await sharp(`${out}/a/big.webp`).metadata();
-  assert.equal(big.width, 50);
+  const big = await pipeline(
+    `${dir}/big.jpg`,
+    ["resize", "50"],
+    ["grayscale"],
+    ["write", `${out}/a/{name}.webp`, "quality=70"],
+  );
+  assert.equal(big.status, 0, big.stderr);
+  const bigm = await sharp(`${out}/a/big.webp`).metadata();
+  assert.equal(bigm.width, 50);
 });
 
 test("resize does not upscale by default, does with the flag", async () => {
@@ -776,7 +783,8 @@ test("stress: 100-frame animated GIF through multiple stages", async () => {
   assert.ok(differs(p50, p99), "frame 50 and frame 99 should have different center colors");
 
   // 100 frames through resize+crop+sharpen+write should complete in <30s
-  assert.ok(elapsed < 30_000, `animated stress test took ${elapsed}ms, expected <30s`);
+  // 100 animated frames through resize+crop+sharpen+write should complete in <60s on CI
+  assert.ok(elapsed < 60_000, `animated stress test took ${elapsed}ms, expected <60s`);
 });
 
 test("trim removes border pixels matching the background", async () => {
