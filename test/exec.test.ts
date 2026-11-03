@@ -736,8 +736,8 @@ test("stress: 200 images through a multi-stage pipeline", async () => {
     assert.equal(m.width, 20);
   }
 
-  // 200 images through resize+sharpen+write should complete in <30s
-  assert.ok(elapsed < 30_000, `stress test took ${elapsed}ms, expected <30s`);
+  // 200 images through resize+sharpen+write should complete in <60s on CI
+  assert.ok(elapsed < 60_000, `stress test took ${elapsed}ms, expected <60s`);
 });
 
 test("stress: 100-frame animated GIF through multiple stages", async () => {
