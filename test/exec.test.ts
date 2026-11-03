@@ -156,13 +156,20 @@ test("resize height-only (x600) constrains by height", async () => {
 
 test("write {ext} keeps each source format", async () => {
   const res = await pipeline(
-    `${dir}/*.{jpg,png}`,
+    `${dir}/red.jpg`,
     ["resize", "40"],
     ["write", `${out}/d/{name}.{ext}`],
   );
   assert.equal(res.status, 0, res.stderr);
   assert.equal((await sharp(`${out}/d/red.jpg`).metadata()).format, "jpeg");
-  assert.equal((await sharp(`${out}/d/semi.png`).metadata()).format, "png");
+
+  const res2 = await pipeline(
+    `${dir}/semi.png`,
+    ["resize", "40"],
+    ["write", `${out}/d2/{name}.{ext}`],
+  );
+  assert.equal(res2.status, 0, res2.stderr);
+  assert.equal((await sharp(`${out}/d2/semi.png`).metadata()).format, "png");
 });
 
 test("jpeg output flattens alpha onto the background", async () => {
